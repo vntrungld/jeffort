@@ -1,0 +1,4 @@
+node_modules/
+.claude-plugin/types/
+eval/results/
+eval/fixtures.local.jsonl

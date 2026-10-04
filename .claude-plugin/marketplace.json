@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "jev-effort-local",
+  "description": "Local marketplace for the jev-effort mod",
+  "owner": { "name": "Lam Duc" },
+  "plugins": [
+    {
+      "name": "jev-effort",
+      "description": "Per-turn effort routing with TypeSafe's Jev, applied per request. Off until /jev on.",
+      "version": "0.1.0",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

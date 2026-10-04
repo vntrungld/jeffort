@@ -1,0 +1,19 @@
+{
+  "name": "jev-effort",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code mod: per-turn effort routing with TypeSafe's Jev, applied per request at turn.step",
+  "scripts": {
+    "test": "bun test ./test && claude plugin test .",
+    "test:unit": "bun test ./test",
+    "test:mod": "claude plugin test .",
+    "typecheck": "tsc -p tsconfig.bun.json && tsc -p .",
+    "validate": "claude plugin validate .",
+    "eval": "bun eval/run.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,42 @@
+{"kind":"effort","source":"article","prompt":"Build a personal fitness and workout tracker app.","expected":"medium","accept":["low","medium"]}
+{"kind":"effort","source":"article","prompt":"Sketch an interactive mockup of a redesigned /config menu for Claude Code, with submenus and better search, so I can see the idea.","expected":"low","accept":["low","medium"]}
+{"kind":"effort","source":"article","prompt":"Here's the spec we settled on in the interview: a workout log with exercises, sets, reps and weight; a weekly volume chart; local storage only; no accounts. Implement it.","expected":"medium","accept":["medium"]}
+{"kind":"effort","source":"article","prompt":"Write an HTML sanitizer that strips every way of smuggling JavaScript into a page.","expected":"xhigh","accept":["high","xhigh"]}
+{"kind":"effort","source":"article","prompt":"Here's the crash report from the storage engine. Fix the bug without breaking compaction.","expected":"xhigh","accept":["high","xhigh"]}
+{"kind":"effort","source":"article","prompt":"Write a command-line linear program solver in Python.","expected":"high","accept":["high","xhigh"]}
+{"kind":"effort","source":"article","prompt":"Run a gene set enrichment analysis on this proteomics data to find which of the eight treatments resemble the target tissue.","expected":"high","accept":["high","xhigh"]}
+{"kind":"effort","source":"article","prompt":"Find security vulnerabilities in our payment service's auth layer. Work autonomously end to end and don't stop until you've verified each finding.","expected":"max","accept":["xhigh","max"]}
+{"kind":"effort","source":"article","prompt":"Build and verify the entire app end to end tonight. Don't check in with me until everything passes.","expected":"max","accept":["xhigh","max"]}
+{"kind":"effort","source":"synthetic","prompt":"Let's brainstorm names for the new onboarding flow.","expected":"low","accept":["low"]}
+{"kind":"effort","source":"synthetic","prompt":"Rename getUserById to fetchUserById across the codebase.","expected":"low","accept":["low","medium"]}
+{"kind":"effort","source":"synthetic","prompt":"Fix the flaky test in checkout.spec.ts. It fails about 1 in 10 runs on CI.","expected":"high","accept":["high","xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"Add a dark mode toggle to the settings page.","expected":"medium","accept":["medium"]}
+{"kind":"effort","source":"synthetic","prompt":"Review this PR for correctness bugs.","expected":"high","accept":["high","xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"Optimize the feed query. p95 is 900ms and it needs to be under 200ms.","expected":"high","accept":["high","xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"What does this regex do? ^(?=.*\\d)(?=.*[a-z]).{8,}$","expected":"low","accept":["low"]}
+{"kind":"effort","source":"synthetic","prompt":"Explain the difference between optimistic and pessimistic locking.","expected":"low","accept":["low"]}
+{"kind":"effort","source":"synthetic","prompt":"Quick rough prototype of a drag-and-drop kanban board. Doesn't need to be polished.","expected":"low","accept":["low","medium"]}
+{"kind":"effort","source":"synthetic","prompt":"Write a parser for RFC 5322 email addresses with full support for quoted local parts and comments.","expected":"xhigh","accept":["high","xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"Implement the pagination endpoint from the ticket: cursor-based, 20 items per page, sorted by createdAt descending.","expected":"medium","accept":["medium"]}
+{"kind":"effort","source":"synthetic","prompt":"Commit the staged changes with a good message.","expected":"low","accept":["low"]}
+{"kind":"effort","source":"synthetic","prompt":"Why is the build failing? Error: Cannot find module '@/lib/utils'","expected":"medium","accept":["medium","high"]}
+{"kind":"effort","source":"synthetic","prompt":"Migrate our database from MySQL to Postgres, including the data backfill, and verify that row counts and checksums match.","expected":"xhigh","accept":["high","xhigh","max"]}
+{"kind":"effort","source":"synthetic","prompt":"Update the README to mention the new PAYMENTS_ENABLED env var.","expected":"low","accept":["low"]}
+{"kind":"effort","source":"synthetic","prompt":"Implement a lock-free concurrent queue in Rust and prove it's linearizable with loom tests.","expected":"xhigh","accept":["xhigh","max"]}
+{"kind":"effort","source":"synthetic","prompt":"Write unit tests for the date formatting helpers.","expected":"medium","accept":["medium","high"]}
+{"kind":"effort","source":"synthetic","prompt":"Set up a GitHub Actions workflow that runs lint and tests on pull requests.","expected":"medium","accept":["medium"]}
+{"kind":"effort","source":"synthetic","prompt":"There's a race condition somewhere in the websocket reconnect logic that causes duplicate messages. Find it and fix it.","expected":"xhigh","accept":["high","xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"yes go ahead","previous":"Write an HTML sanitizer that strips every way of smuggling JavaScript into a page.","previousLevel":"xhigh","expected":"xhigh","accept":["xhigh"]}
+{"kind":"effort","source":"synthetic","prompt":"looks good, continue","previous":"Add a dark mode toggle to the settings page.","previousLevel":"medium","expected":"medium","accept":["medium"]}
+{"kind":"subagent","source":"synthetic","description":"Review branch diff","prompt":"Review the diff on this branch for correctness bugs. Report each finding with file:line and a concrete failure scenario.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Find createSession callers","prompt":"Search the codebase for all callers of createSession and list them with file paths.","expected":"delegated"}
+{"kind":"subagent","source":"synthetic","description":"Implement pagination","prompt":"Implement the pagination endpoint exactly as specified in plan.md section 3, then run the tests and report results.","expected":"delegated"}
+{"kind":"subagent","source":"synthetic","description":"Verify token-leak finding","prompt":"Adversarially verify this claimed finding: the logger writes refresh tokens to stdout. Confirm or refute it with evidence from the code.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Rename FeedItem","prompt":"Rename the FeedItem type to FeedEntry across packages/web-ui and fix all imports.","expected":"delegated"}
+{"kind":"subagent","source":"synthetic","description":"SSE vs WebSockets","prompt":"Decide between SSE and WebSockets for the live feed. Weigh the tradeoffs for our stack and recommend one.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Rewrite onboarding copy","prompt":"Rewrite the onboarding screen copy so it matches the brand voice guide.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Run migration locally","prompt":"Run the migration script against the local database and report the row counts per table.","expected":"delegated"}
+{"kind":"subagent","source":"synthetic","description":"Root-cause 502s","prompt":"Find the root cause of the intermittent 502 errors in the API gateway logs from last night.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Summarize token refresh","prompt":"Read these five files and summarize how auth tokens are refreshed.","expected":"delegated"}
+{"kind":"subagent","source":"synthetic","description":"Redo cache fix","prompt":"The previous implementation of the cache invalidation fix failed review. Redo it properly.","expected":"judgment"}
+{"kind":"subagent","source":"synthetic","description":"Checkout e2e tests","prompt":"Write Playwright tests for the checkout flow as described in the test plan.","expected":"delegated"}

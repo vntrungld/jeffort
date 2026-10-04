@@ -1,0 +1,91 @@
+{
+  "name": "jev-effort",
+  "version": "0.1.0",
+  "description": "Per-turn effort routing with TypeSafe's Jev, applied per request at turn.step. Off until /jev on.",
+  "author": { "name": "Lam Duc" },
+  "license": "MIT",
+  "keywords": ["effort", "routing", "subagents", "typesafe", "jev", "mod"],
+  "userConfig": {
+    "typesafe_api_key": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "Key for api.typesafe.ai. Leave empty to use TYPESAFE_API_KEY or JEV_API_KEY from the environment.",
+      "sensitive": true
+    },
+    "enabled_by_default": {
+      "type": "boolean",
+      "title": "Route every session",
+      "description": "On: routing starts on in every session. Off: each session starts off until you type /jev on.",
+      "default": false
+    },
+    "max_effort": {
+      "type": "string",
+      "title": "Highest effort to route to",
+      "description": "The router never picks a level above this one.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "xhigh"
+    },
+    "route_subagents": {
+      "type": "boolean",
+      "title": "Route subagent models",
+      "description": "Pick each subagent's model from the kind of work it is given (judgment or delegated).",
+      "default": true
+    },
+    "judgment_model": {
+      "type": "string",
+      "title": "Model for judgment subagents",
+      "description": "Review, verification, design and root-cause debugging subagents run on this model alias.",
+      "default": "opus"
+    },
+    "delegated_model": {
+      "type": "string",
+      "title": "Model for delegated subagents",
+      "description": "Implementation, research, search and mechanical-edit subagents run on this model alias.",
+      "default": "sonnet"
+    },
+    "redact": {
+      "type": "boolean",
+      "title": "Redact before sending",
+      "description": "Replace code blocks, secrets, URLs, e-mails, IPs and absolute paths with markers before a prompt goes to TypeSafe.",
+      "default": true
+    },
+    "cache_safe_only": {
+      "type": "boolean",
+      "title": "Only route cache-safe models",
+      "description": "Change effort only on Opus 5.5, Sonnet 5.5 and Fable 5.1, where a per-request effort change keeps the prompt cache.",
+      "default": true
+    },
+    "cache_guard": {
+      "type": "boolean",
+      "title": "Pause on cache misses",
+      "description": "Warn after an effort change that re-read the whole prompt cache, and pause routing after the second one.",
+      "default": true
+    },
+    "timeout_ms": {
+      "type": "number",
+      "title": "Jev timeout (ms)",
+      "description": "How long a turn waits for Jev before it starts at the session's effort.",
+      "default": 2500,
+      "min": 300,
+      "max": 8000
+    },
+    "show_decisions": {
+      "type": "boolean",
+      "title": "Show routing lines",
+      "description": "Show a dim line in the transcript when the router changes a turn's effort or a subagent's model.",
+      "default": true
+    },
+    "base_url": {
+      "type": "string",
+      "title": "TypeSafe API base URL",
+      "description": "https only (or http to localhost). Change only to go through your own proxy.",
+      "default": "https://api.typesafe.ai"
+    },
+    "jev_model": {
+      "type": "string",
+      "title": "Jev model",
+      "description": "Pinned because the policy thresholds were tuned on it. Rerun the eval before changing.",
+      "default": "jev-1.13.0"
+    }
+  }
+}
