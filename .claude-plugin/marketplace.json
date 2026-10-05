@@ -1,0 +1,23 @@
+{
+  "name": "vntrungld",
+  "description": "vntrungld's Claude Code plugins",
+  "owner": {
+    "name": "Lam Duc"
+  },
+  "plugins": [
+    {
+      "name": "tightlip",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/vntrungld/tightlip.git",
+        "path": "plugins/tightlip"
+      },
+      "description": "Redact keys, tokens and passwords in tool output; block credential dumps and prompts that contain secrets"
+    },
+    {
+      "name": "jeffort",
+      "source": "./",
+      "description": "Per-turn effort routing with TypeSafe's Jev, applied per request. Off until /jev on."
+    }
+  ]
+}

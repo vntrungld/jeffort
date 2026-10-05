@@ -22,23 +22,19 @@ This is a fork of [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjj
 Requires Claude Code **2.1.289** or later (the tested version) and a TypeSafe API key.
 
 ```bash
-# 1. Get the code
-git clone git@github.com:vntrungld/jeffort.git ~/tools/jeffort
-
-# 2. Key: store it in the keychain via /plugin configure (step 4), or set the env var
-export TYPESAFE_API_KEY=...
-
-# 3a. Try it for one session:
-claude --plugin-dir ~/tools/jeffort
-
-# 3b. Or install it permanently from the vntrungld marketplace (hosted in the tightlip repo):
-claude plugin marketplace add https://github.com/vntrungld/tightlip.git
+# 1. Add the vntrungld marketplace and install (no clone needed):
+claude plugin marketplace add vntrungld/jeffort
 claude plugin install jeffort@vntrungld
+
+# 2. Key: store it in the keychain via /plugin configure (step 3), or set the env var
+export TYPESAFE_API_KEY=...
 ```
 
-The `vntrungld` marketplace lives in [vntrungld/tightlip](https://github.com/vntrungld/tightlip) and lists both of its plugins; this repo has no marketplace of its own, so adding it can't replace that one. The permanent install pulls jeffort from GitHub, so for local edits use `--plugin-dir` (step 3a).
+The `vntrungld` marketplace lists both jeffort and [tightlip](https://github.com/vntrungld/tightlip). This repo and the tightlip repo carry the same catalog, so adding either one (`vntrungld/jeffort` or `vntrungld/tightlip`) gives you both plugins under `@vntrungld`; adding the other later just replaces it with the same list. Update with `claude plugin marketplace update vntrungld` and `claude plugin update jeffort@vntrungld`.
 
-4. In Claude Code: `/plugin configure jeffort@vntrungld` to enter the key and adjust options. The non-sensitive options are also in `/config`.
+To work on the code, clone it and load it for one session instead: `claude --plugin-dir <path-to-clone>`.
+
+3. In Claude Code: `/plugin configure jeffort@vntrungld` to enter the key and adjust options. The non-sensitive options are also in `/config`.
 
 If your organization sets `allowManagedModsOnly` or `allowManagedHooksOnly` in managed settings, the mod will not load. If your Claude Code is older and reports that function hooks are disabled, set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
 
