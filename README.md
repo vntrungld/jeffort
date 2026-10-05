@@ -33,10 +33,10 @@ claude --plugin-dir ~/tools/jeffort
 
 # 3b. Hoặc cài cố định từ marketplace local (đọc thẳng từ thư mục, sửa xong /reload-plugins):
 claude plugin marketplace add ~/tools/jeffort
-claude plugin install jeffort@jeffort-local
+claude plugin install jeffort@vntrungld
 ```
 
-4. Trong Claude Code: `/plugin configure jeffort@jeffort-local` để nhập key và chỉnh tùy chọn. Các tùy chọn không nhạy cảm cũng có trong `/config`.
+4. Trong Claude Code: `/plugin configure jeffort@vntrungld` để nhập key và chỉnh tùy chọn. Các tùy chọn không nhạy cảm cũng có trong `/config`.
 
 Nếu công ty bật `allowManagedModsOnly` hoặc `allowManagedHooksOnly` trong managed settings, mod sẽ không load. Nếu Claude Code của bạn cũ hơn và báo function hooks đang tắt, đặt `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
 

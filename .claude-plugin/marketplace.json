@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "jeffort-local",
-  "description": "Local marketplace for the jeffort mod",
+  "name": "vntrungld",
+  "description": "vntrungld plugins",
   "owner": { "name": "Lam Duc" },
   "plugins": [
     {
