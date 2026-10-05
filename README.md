@@ -32,7 +32,7 @@ export TYPESAFE_API_KEY=...
 claude --plugin-dir ~/tools/jeffort
 
 # 3b. Or install it permanently from the vntrungld marketplace (hosted in the tightlip repo):
-claude plugin marketplace add vntrungld/tightlip
+claude plugin marketplace add https://github.com/vntrungld/tightlip.git
 claude plugin install jeffort@vntrungld
 ```
 
