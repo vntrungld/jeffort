@@ -31,10 +31,12 @@ export TYPESAFE_API_KEY=...
 # 3a. Try it for one session:
 claude --plugin-dir ~/tools/jeffort
 
-# 3b. Or install it permanently from the local marketplace (reads the folder directly; /reload-plugins after edits):
-claude plugin marketplace add ~/tools/jeffort
+# 3b. Or install it permanently from the vntrungld marketplace (hosted in the tightlip repo):
+claude plugin marketplace add vntrungld/tightlip
 claude plugin install jeffort@vntrungld
 ```
+
+The `vntrungld` marketplace lives in [vntrungld/tightlip](https://github.com/vntrungld/tightlip) and lists both of its plugins; this repo has no marketplace of its own, so adding it can't replace that one. The permanent install pulls jeffort from GitHub, so for local edits use `--plugin-dir` (step 3a).
 
 4. In Claude Code: `/plugin configure jeffort@vntrungld` to enter the key and adjust options. The non-sensitive options are also in `/config`.
 
