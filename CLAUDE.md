@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `jeffort` is a Claude Code **mod** (plugin with function hooks), not a standalone app. It asks TypeSafe's Jev (`api.typesafe.ai/v1/systemone`) how much effort each typed prompt needs and rewrites `effort` on every main-loop request of that turn. It never changes the main loop's model. Off by default; toggled per session with `/jev on|off|status`.
 
-It is a fork of `jjjjjjjjjjjjjjjjacob/jev-router` (MIT, commit `50d7e40`). The README is in Vietnamese; code and comments are in English.
+It is a fork of `jjjjjjjjjjjjjjjjacob/jev-router` (MIT, commit `50d7e40`). README, code and comments are in English.
 
 ## Commands
 

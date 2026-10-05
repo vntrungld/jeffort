@@ -1,124 +1,124 @@
 # jeffort
 
-Mod cho Claude Code: hỏi [Jev](https://typesafe.ai) (TypeSafe) xem mỗi prompt cần effort bao nhiêu, rồi gửi mọi request của lượt đó ở mức effort ấy. Model của luồng chính không bao giờ bị đổi. Mặc định tắt, bật bằng `/jev on`.
+A Claude Code mod that asks [Jev](https://typesafe.ai) (TypeSafe) how much effort each prompt needs, then sends every request of that turn at that effort. The main loop's model is never changed. Off by default; turn it on with `/jev on`.
 
-Đây là fork của [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjjjjjjjjjacob/jev-router) (MIT), lấy từ commit `50d7e40` ngày 2026-09-27. Bộ câu hỏi gửi Jev (`hooks/lib/questions.ts`), chính sách chọn level (`hooks/lib/policy.ts`) và bộ eval giữ nguyên từ upstream. Phần áp effort và phần lọc dữ liệu được viết lại.
+This is a fork of [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjjjjjjjjjacob/jev-router) (MIT), taken from commit `50d7e40` on 2026-09-27. The questions sent to Jev (`hooks/lib/questions.ts`), the level policy (`hooks/lib/policy.ts`) and the eval set are kept from upstream. The parts that apply effort and filter data were rewritten.
 
-## Khác gì upstream
+## How it differs from upstream
 
 | | upstream jev-router | jeffort |
 | --- | --- | --- |
-| Cách áp effort | Bảo Claude load skill `jev-<level>`, chặn tool call cho tới khi load xong | Mod `turn.step` ghi `effort` vào từng request của lượt |
-| Lượt trả lời không gọi tool | Có thể chạy ở level của session (bỏ qua skill) | Vẫn được route |
-| Lượt từ notification, peer, plugin | Bị route như prompt thường | Bỏ qua, chỉ route prompt bạn gõ |
-| Dữ liệu gửi TypeSafe | Prompt (bỏ pasted block), cắt đầu/đuôi | Như upstream, thêm che code block, secret, URL, e-mail, IP, đường dẫn tuyệt đối |
-| Effort tối đa | `max` | `xhigh` (chỉnh được) |
-| Cache | Tin tài liệu | Theo dõi `cache_read`/`cache_creation` thật, cảnh báo rồi tự dừng khi đổi effort làm mất cache |
-| Subagent | Ăn theo effort của lượt; model route theo judgment/delegated | Giữ effort riêng; model route như upstream, qua `agent.spawn` |
-| Runtime | Bun/Node, shell script, hook theo tool call | Chạy trong engine của Claude Code, không cần Bun/Node |
+| How effort is applied | Tells Claude to load a `jev-<level>` skill and blocks tool calls until it does | A `turn.step` mod writes `effort` into each request of the turn |
+| Turns that call no tools | May run at the session level (skill skipped) | Still routed |
+| Turns from notifications, peers, plugins | Routed like ordinary prompts | Skipped; only prompts you type are routed |
+| Data sent to TypeSafe | Prompt (pasted blocks removed), head/tail truncated | Same as upstream, plus masking of code blocks, secrets, URLs, e-mails, IPs and absolute paths |
+| Highest effort | `max` | `xhigh` (configurable) |
+| Cache | Trusts the docs | Watches real `cache_read`/`cache_creation`, warns and then pauses when an effort change loses the cache |
+| Subagents | Inherit the turn's effort; model routed by judgment/delegated | Keep their own effort; model routed as upstream, via `agent.spawn` |
+| Runtime | Bun/Node, shell scripts, tool-call hooks | Runs inside Claude Code's engine; no Bun/Node needed |
 
-## Cài đặt
+## Install
 
-Yêu cầu: Claude Code **2.1.289** trở lên (bản đã test), và một TypeSafe API key.
+Requires Claude Code **2.1.289** or later (the tested version) and a TypeSafe API key.
 
 ```bash
-# 1. Đặt repo ở đâu tùy bạn, ví dụ:
-mkdir -p ~/tools && tar -xzf jeffort.tar.gz -C ~/tools
+# 1. Get the code
+git clone git@github.com:vntrungld/jeffort.git ~/tools/jeffort
 
-# 2. Key: lưu vào keychain qua /plugin configure (bước 4), hoặc đặt env
-export TYPESAFE_API_KEY=ts_...
+# 2. Key: store it in the keychain via /plugin configure (step 4), or set the env var
+export TYPESAFE_API_KEY=...
 
-# 3a. Thử nhanh cho một session:
+# 3a. Try it for one session:
 claude --plugin-dir ~/tools/jeffort
 
-# 3b. Hoặc cài cố định từ marketplace local (đọc thẳng từ thư mục, sửa xong /reload-plugins):
+# 3b. Or install it permanently from the local marketplace (reads the folder directly; /reload-plugins after edits):
 claude plugin marketplace add ~/tools/jeffort
 claude plugin install jeffort@vntrungld
 ```
 
-4. Trong Claude Code: `/plugin configure jeffort@vntrungld` để nhập key và chỉnh tùy chọn. Các tùy chọn không nhạy cảm cũng có trong `/config`.
+4. In Claude Code: `/plugin configure jeffort@vntrungld` to enter the key and adjust options. The non-sensitive options are also in `/config`.
 
-Nếu công ty bật `allowManagedModsOnly` hoặc `allowManagedHooksOnly` trong managed settings, mod sẽ không load. Nếu Claude Code của bạn cũ hơn và báo function hooks đang tắt, đặt `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
+If your organization sets `allowManagedModsOnly` or `allowManagedHooksOnly` in managed settings, the mod will not load. If your Claude Code is older and reports that function hooks are disabled, set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
 
-## Dùng
+## Usage
 
 ```
-/jev on       bật cho session này
-/jev status   xem trạng thái và 8 quyết định gần nhất
-/jev off      tắt
+/jev on       turn on for this session
+/jev status   show state and the last 8 decisions
+/jev off      turn off
 ```
 
-Mỗi lượt được route sẽ hiện một dòng mờ như `jev → high · verification decides success (conf 0.72)`. Thanh trạng thái hiện `jev · <level>` khi đang bật. Lượt sau tự quay về level của session nếu Jev không chọn level khác.
+Each routed turn shows a dim line such as `jev → high · verification decides success (conf 0.72)`. The status line shows `jev · <level>` while routing is on. The next turn goes back to the session level unless Jev picks another level.
 
-## Tùy chọn
+## Options
 
-| Tùy chọn | Mặc định | Ý nghĩa |
+| Option | Default | Meaning |
 | --- | --- | --- |
-| `typesafe_api_key` | (trống) | Key. Trống thì đọc `TYPESAFE_API_KEY` hoặc `JEV_API_KEY` |
-| `enabled_by_default` | `false` | Bật sẵn ở mọi session |
-| `max_effort` | `xhigh` | Level cao nhất router được chọn |
-| `route_subagents` | `true` | Route model của subagent |
-| `judgment_model` / `delegated_model` | `opus` / `sonnet` | Model cho subagent review/debug/thiết kế và cho subagent làm việc được giao |
-| `redact` | `true` | Che dữ liệu trước khi gửi (xem bên dưới) |
-| `cache_safe_only` | `true` | Chỉ đổi effort trên Opus 5.5, Sonnet 5.5, Fable 5.1 |
-| `cache_guard` | `true` | Cảnh báo ở lần mất cache đầu, tự dừng ở lần thứ hai |
-| `timeout_ms` | `2500` | Chờ Jev tối đa bao lâu, quá thì lượt chạy ở level của session |
-| `show_decisions` | `true` | Hiện dòng `jev → …` |
-| `base_url` | `https://api.typesafe.ai` | Chỉ nhận https, hoặc http tới localhost |
-| `jev_model` | `jev-1.13.0` | Được ghim vì ngưỡng của policy được hiệu chỉnh trên bản này |
+| `typesafe_api_key` | (empty) | The key. When empty, reads `TYPESAFE_API_KEY` or `JEV_API_KEY` |
+| `enabled_by_default` | `false` | Start every session with routing on |
+| `max_effort` | `xhigh` | Highest level the router may pick |
+| `route_subagents` | `true` | Route subagent models |
+| `judgment_model` / `delegated_model` | `opus` / `sonnet` | Model for review/debug/design subagents, and for subagents doing delegated work |
+| `redact` | `true` | Mask data before sending (see below) |
+| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Fable 5.1 |
+| `cache_guard` | `true` | Warn on the first cache miss, pause on the second |
+| `timeout_ms` | `2500` | How long to wait for Jev before the turn runs at the session level |
+| `show_decisions` | `true` | Show the `jev → …` line |
+| `base_url` | `https://api.typesafe.ai` | https only, or http to localhost |
+| `jev_model` | `jev-1.13.0` | Pinned because the policy thresholds were tuned on this version |
 
-## Dữ liệu gửi đi
+## What gets sent
 
-Chỉ khi đang bật, và chỉ với prompt bạn gõ (không gửi slash command, notification, tin nhắn từ session khác). Mỗi lượt có **một** request tới `api.typesafe.ai/v1/systemone`, gồm:
+Only while routing is on, and only for prompts you type (no slash commands, notifications, or messages from other sessions). Each turn makes **one** request to `api.typesafe.ai/v1/systemone`, containing:
 
-- prompt hiện tại sau khi lọc, tối đa 3.000 ký tự đầu và 1.000 ký tự cuối;
-- 1.500 ký tự đầu của prompt trước (đã lọc), để Jev nhận ra câu "ok làm đi";
-- với subagent: `prompt` và `description` của lệnh Agent, cũng đã lọc.
+- the current prompt after filtering, at most the first 3,000 and last 1,000 characters;
+- the first 1,500 characters of the previous prompt (filtered), so Jev recognizes "ok, go ahead";
+- for subagents: the Agent call's `prompt` and `description`, also filtered.
 
-Phần lọc thay:
+The filter replaces:
 
-| Nội dung | Thành |
+| Content | With |
 | --- | --- |
 | pasted block | `[pasted text: N chars]` |
-| code block có rào ``` | `[code block: N lines]` |
-| inline code dài từ 40 ký tự | `[code]` |
-| PEM key, `sk-…`, `ghp_…`, `xox…`, `AKIA…`, JWT, `password=…`, hex hoặc base64 dài | `<secret>` |
-| URL, DSN (`postgres://…`) | `<url>` |
+| fenced ``` code block | `[code block: N lines]` |
+| inline code of 40+ characters | `[code]` |
+| PEM keys, `sk-…`, `ghp_…`, `xox…`, `AKIA…`, JWTs, `password=…`, long hex or base64 | `<secret>` |
+| URLs, DSNs (`postgres://…`) | `<url>` |
 | e-mail | `<email>` |
 | IPv4 | `<ip>` |
-| đường dẫn tuyệt đối, `~/…`, `C:\…` | `<path>` |
+| absolute paths, `~/…`, `C:\…` | `<path>` |
 
-Giữ lại: tên hàm ngắn trong backtick (`getUser`) và đường dẫn tương đối (`app/Http/Kernel.php`), vì đó là thứ cho Jev biết việc gì đang được yêu cầu. Bộ lọc dùng regex, không phải DLP: secret dạng lạ hoặc tên khách hàng viết thường vẫn lọt qua. Với repo của công ty, hãy hỏi chính sách nội bộ trước khi bật.
+Kept: short function names in backticks (`getUser`) and relative paths (`app/Http/Kernel.php`), since they tell Jev what kind of work is being asked for. The filter is regex-based, not DLP: unusual secret formats or lowercase customer names can slip through. For company repositories, check your internal policy before turning it on.
 
-Trên máy, các quyết định được lưu trong `$.store` của mod (tối đa 200 dòng, mỗi dòng là 80 ký tự đầu của prompt đã lọc) để chỉnh ngưỡng sau này.
+Locally, decisions are kept in the mod's `$.store` (at most 200 entries, each the first 80 characters of the filtered prompt) for tuning thresholds later.
 
-## Kết quả kiểm tra
+## Test results
 
-- `bun test ./test`: 79 unit test cho policy (port từ upstream), bộ lọc, client Jev và cache guard.
-- `claude plugin test .`: 18 test chạy mod trên engine thật của Claude Code (route theo lượt, subagent, notification, timeout, base URL, lọc dữ liệu, cache guard, `/jev`). Đã thử phá 3 hành vi chính (bỏ qua bước của subagent, lọc dữ liệu, chỉ route model giữ cache) để chắc test bắt được từng cái.
-- `claude plugin validate .` và `tsc` đều sạch.
-- **Chạy thật trong một session headless của Claude Code 2.1.289** (Sonnet 5.5), với một server giả lập Jev chạy trên localhost:
-  - Transcript ghi đúng `effort: high` / `low` cho từng lượt được route, nghĩa là effort thực sự tới API.
-  - Ở môi trường test (container cloud, request đi qua proxy `ANTHROPIC_BASE_URL`), mỗi lần đổi effort giữ cache của system prompt và tools (~13k token) nhưng **ghi lại phần hội thoại** (~4,5k token). Lệnh `/effort` có sẵn của Claude Code cũng tốn đúng như vậy, nên chi phí này đến từ môi trường, không phải từ mod. Cache guard bắt được và dừng route sau lần thứ hai.
+- `bun test ./test`: 79 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
+- `claude plugin test .`: 18 tests running the mod on Claude Code's real engine (per-turn routing, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`). Three key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models) to confirm the tests catch each one.
+- `claude plugin validate .` and `tsc` are clean.
+- **Real run in a headless Claude Code 2.1.289 session** (Sonnet 5.5), against a mock Jev server on localhost:
+  - The transcript records `effort: high` / `low` correctly for each routed turn, so the effort really reaches the API.
+  - In the test environment (a cloud container, requests going through an `ANTHROPIC_BASE_URL` proxy), each effort change kept the cache for the system prompt and tools (~13k tokens) but **rewrote the conversation part** (~4.5k tokens). Claude Code's built-in `/effort` command costs exactly the same, so this cost comes from the environment, not the mod. The cache guard caught it and paused routing after the second time.
 
-**Chưa kiểm chứng:**
-1. Chưa gọi TypeSafe thật (không có key), nên độ chính xác 97% là số của upstream, đo trên prompt tiếng Anh không bị lọc. Bộ lọc không làm thay đổi fixture nào trong 42 fixture của upstream, vì chúng không chứa code hay dữ liệu nhạy cảm; prompt thật của bạn sẽ khác. Hãy chạy `TYPESAFE_API_KEY=… bun eval/run.ts` và `--no-redact` để so, rồi thêm prompt tiếng Việt thật vào `eval/fixtures.local.jsonl`.
-2. Chưa test trên máy bạn với subscription gọi thẳng API. Theo tài liệu thì ở đó đổi effort giữ được cache; mở `/usage` xem dòng `Prompt cache (main)`, hoặc để cache guard tự kiểm.
-3. Chưa test route subagent trong session thật, mới test qua bộ test của engine.
+**Not yet verified:**
+1. TypeSafe has not been called for real (no key), so the 97% accuracy is upstream's number, measured on unfiltered English prompts. The filter changes none of upstream's 42 fixtures, since they contain no code or sensitive data; your real prompts will differ. Run `TYPESAFE_API_KEY=… bun eval/run.ts` and `--no-redact` to compare, then add your own real prompts to `eval/fixtures.local.jsonl`.
+2. Not tested on a machine with a subscription calling the API directly. Per the docs, effort changes keep the cache there; check the `Prompt cache (main)` line in `/usage`, or let the cache guard check for you.
+3. Subagent routing has not been tested in a real session, only through the engine test suite.
 
-## Phát triển
+## Development
 
 ```bash
 bun install
-bun test ./test            # unit test
-claude plugin test .       # test mod trên engine
+bun test ./test            # unit tests
+claude plugin test .       # mod tests on the engine
 claude plugin validate .
-tsc -p tsconfig.bun.json && tsc -p .   # tsc -p . cần .claude-plugin/types, engine tự sinh khi load bằng --plugin-dir
-TYPESAFE_API_KEY=… bun eval/run.ts     # eval thật; --no-redact; --replay
+tsc -p tsconfig.bun.json && tsc -p .   # tsc -p . needs .claude-plugin/types, generated by the engine when loaded with --plugin-dir
+TYPESAFE_API_KEY=… bun eval/run.ts     # live eval; --no-redact; --replay
 ```
 
-`hooks/lib/questions.ts` được giữ nguyên từng chữ, vì Jev hiểu câu hỏi theo nghĩa đen. Sửa câu chữ thì phải chạy lại eval thật.
+`hooks/lib/questions.ts` is kept word for word, because Jev reads the questions literally. Changing the wording means rerunning the live eval.
 
 ## License
 
-MIT. Xem `LICENSE`: bản quyền gốc của jjjjjjjjjjjjjjjjacob, phần sửa đổi của fork này.
+MIT. See `LICENSE`: original copyright by jjjjjjjjjjjjjjjjacob, modifications by this fork.
