@@ -1,5 +1,5 @@
 {
-  "name": "jev-effort",
+  "name": "jeffort",
   "version": "0.1.0",
   "description": "Per-turn effort routing with TypeSafe's Jev, applied per request at turn.step. Off until /jev on.",
   "author": { "name": "Lam Duc" },

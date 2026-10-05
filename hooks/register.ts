@@ -1,4 +1,4 @@
-// jev-effort: a mod that asks TypeSafe's Jev how much effort each prompt needs and sends
+// jeffort: a mod that asks TypeSafe's Jev how much effort each prompt needs and sends
 // that turn's model requests at that effort. Forked from jjjjjjjjjjjjjjjjacob/jev-router
 // (MIT): the questions, policy and eval are theirs; how the level is applied is not.
 //

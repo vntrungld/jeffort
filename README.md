@@ -1,4 +1,4 @@
-# jev-effort
+# jeffort
 
 Mod cho Claude Code: hỏi [Jev](https://typesafe.ai) (TypeSafe) xem mỗi prompt cần effort bao nhiêu, rồi gửi mọi request của lượt đó ở mức effort ấy. Model của luồng chính không bao giờ bị đổi. Mặc định tắt, bật bằng `/jev on`.
 
@@ -6,7 +6,7 @@ Mod cho Claude Code: hỏi [Jev](https://typesafe.ai) (TypeSafe) xem mỗi promp
 
 ## Khác gì upstream
 
-| | upstream jev-router | jev-effort |
+| | upstream jev-router | jeffort |
 | --- | --- | --- |
 | Cách áp effort | Bảo Claude load skill `jev-<level>`, chặn tool call cho tới khi load xong | Mod `turn.step` ghi `effort` vào từng request của lượt |
 | Lượt trả lời không gọi tool | Có thể chạy ở level của session (bỏ qua skill) | Vẫn được route |
@@ -23,20 +23,20 @@ Yêu cầu: Claude Code **2.1.289** trở lên (bản đã test), và một Type
 
 ```bash
 # 1. Đặt repo ở đâu tùy bạn, ví dụ:
-mkdir -p ~/tools && tar -xzf jev-effort.tar.gz -C ~/tools
+mkdir -p ~/tools && tar -xzf jeffort.tar.gz -C ~/tools
 
 # 2. Key: lưu vào keychain qua /plugin configure (bước 4), hoặc đặt env
 export TYPESAFE_API_KEY=ts_...
 
 # 3a. Thử nhanh cho một session:
-claude --plugin-dir ~/tools/jev-effort
+claude --plugin-dir ~/tools/jeffort
 
 # 3b. Hoặc cài cố định từ marketplace local (đọc thẳng từ thư mục, sửa xong /reload-plugins):
-claude plugin marketplace add ~/tools/jev-effort
-claude plugin install jev-effort@jev-effort-local
+claude plugin marketplace add ~/tools/jeffort
+claude plugin install jeffort@jeffort-local
 ```
 
-4. Trong Claude Code: `/plugin configure jev-effort@jev-effort-local` để nhập key và chỉnh tùy chọn. Các tùy chọn không nhạy cảm cũng có trong `/config`.
+4. Trong Claude Code: `/plugin configure jeffort@jeffort-local` để nhập key và chỉnh tùy chọn. Các tùy chọn không nhạy cảm cũng có trong `/config`.
 
 Nếu công ty bật `allowManagedModsOnly` hoặc `allowManagedHooksOnly` trong managed settings, mod sẽ không load. Nếu Claude Code của bạn cũ hơn và báo function hooks đang tắt, đặt `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
 
