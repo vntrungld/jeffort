@@ -1,6 +1,6 @@
 {
   "name": "jeffort",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Per-turn effort routing with TypeSafe's Jev, applied per request at turn.step. Off until /jev on.",
   "author": { "name": "Lam Duc" },
   "license": "MIT",
@@ -31,6 +31,18 @@
       "description": "Pick each subagent's model from the kind of work it is given (judgment or delegated).",
       "default": true
     },
+    "route_custom_subagents": {
+      "type": "boolean",
+      "title": "Route agents you defined",
+      "description": "Off: only built-in agent types are routed, so an agent from your settings or a plugin keeps the model its definition names. On: route those too.",
+      "default": false
+    },
+    "route_headless": {
+      "type": "boolean",
+      "title": "Route claude -p and the Agent SDK",
+      "description": "Off: only prompts typed in a session or sent by Remote Control are routed. On: also route claude -p, Agent SDK and CI runs (their prompts go to TypeSafe too).",
+      "default": false
+    },
     "judgment_model": {
       "type": "string",
       "title": "Model for judgment subagents",
@@ -52,7 +64,7 @@
     "cache_safe_only": {
       "type": "boolean",
       "title": "Only route cache-safe models",
-      "description": "Change effort only on Opus 5.5, Sonnet 5.5 and Fable 5.1, where a per-request effort change keeps the prompt cache.",
+      "description": "Change effort only on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1, and not on Bedrock, Google Cloud's Agent Platform, a Claude apps gateway or with experimental betas disabled: the setups where a per-request effort change keeps the prompt cache.",
       "default": true
     },
     "cache_guard": {

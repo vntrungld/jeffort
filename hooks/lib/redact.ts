@@ -22,13 +22,18 @@ export const TAIL_CHARS = 1000;
 
 export type ShapedPrompt =
   | { skip: false; text: string; redactions: number }
-  | { skip: true; reason: "empty" | "slash-command" };
+  | { skip: true; reason: "empty" | "slash-command" | "ultrathink" };
+
+// `ultrathink` anywhere in a prompt asks for deeper reasoning on that turn while the effort
+// stays where the person set it. Routing that turn could lower it, so it is left alone.
+const ULTRATHINK = /\bultrathink\b/i;
 
 export function shapePrompt(raw: string | undefined | null, options: { redact?: boolean } = {}): ShapedPrompt {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return { skip: true, reason: "empty" };
   // Slash commands and skills carry their own effort; /jev itself is a command.
   if (trimmed.startsWith("/")) return { skip: true, reason: "slash-command" };
+  if (ULTRATHINK.test(trimmed)) return { skip: true, reason: "ultrathink" };
 
   let redactions = 0;
   let text = trimmed.replace(PASTED_BLOCK, (_match, _id, body: string) => {

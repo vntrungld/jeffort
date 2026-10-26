@@ -1,6 +1,6 @@
 // Ported from jjjjjjjjjjjjjjjjacob/jev-router (MIT), test/policy.test.ts, plus capLevel.
 import { describe, expect, test } from "bun:test";
-import { capLevel, decideEffort, decideSubagentModel, readEffortAnswers, type EffortAnswers } from "../hooks/lib/policy.ts";
+import { capLevel, decideEffort, decideSubagentModel, isRoutableAgentSource, readEffortAnswers, type EffortAnswers } from "../hooks/lib/policy.ts";
 import type { Signal } from "../hooks/lib/questions.ts";
 
 function answers(score: number, signals: Partial<Record<Signal, number>> = {}, confidence = 0.8): EffortAnswers {
@@ -144,5 +144,19 @@ describe("capLevel", () => {
     expect(capLevel("max", "xhigh")).toBe("xhigh");
     expect(capLevel("xhigh", "high")).toBe("high");
     expect(capLevel("medium", "xhigh")).toBe("medium");
+  });
+});
+
+describe("isRoutableAgentSource", () => {
+  test("built-in agents are routed; agents someone defined only when opted in", () => {
+    expect(isRoutableAgentSource("built-in", false)).toBe(true);
+    expect(isRoutableAgentSource("projectSettings", false)).toBe(false);
+    expect(isRoutableAgentSource("plugin", false)).toBe(false);
+    expect(isRoutableAgentSource("userSettings", true)).toBe(true);
+  });
+
+  test("an agent never offered is left alone, opted in or not", () => {
+    expect(isRoutableAgentSource(undefined, false)).toBe(false);
+    expect(isRoutableAgentSource(undefined, true)).toBe(false);
   });
 });

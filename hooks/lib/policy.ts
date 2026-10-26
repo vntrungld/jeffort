@@ -122,6 +122,16 @@ function clampIndex(index: number): number {
 // Lookup agents keep their own defaults; fork ignores `model` entirely.
 export const SKIPPED_SUBAGENT_TYPES = new Set(["fork", "Explore", "claude-code-guide", "statusline-setup"]);
 
+// Where an agent type is defined, as `agent.offer` reports it (`built-in`, `plugin`,
+// `userSettings`, `projectSettings`, ...). An agent someone defined may name its own `model`
+// in frontmatter; the Agent call's `model` outranks it, so routing such an agent would
+// silently replace that choice. Only built-in types are routed unless the person opts in.
+// A type never offered is treated as defined elsewhere: leaving it alone is the safe side.
+export function isRoutableAgentSource(source: string | undefined, routeCustom: boolean): boolean {
+  if (source === "built-in") return true;
+  return routeCustom && source !== undefined;
+}
+
 export type SubagentModels = { judgment: string; delegated: string };
 export type SubagentDecision = { model: string | null; work: SubagentWork | null; reason: string };
 

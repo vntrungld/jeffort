@@ -10,11 +10,12 @@ This is a fork of [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjj
 | --- | --- | --- |
 | How effort is applied | Tells Claude to load a `jev-<level>` skill and blocks tool calls until it does | A `turn.step` mod writes `effort` into each request of the turn |
 | Turns that call no tools | May run at the session level (skill skipped) | Still routed |
-| Turns from notifications, peers, plugins | Routed like ordinary prompts | Skipped; only prompts you type are routed |
+| Turns from notifications, peers, plugins | Routed like ordinary prompts | Skipped; only prompts you type (or send by Remote Control) are routed. `claude -p` and the Agent SDK only with `route_headless` |
+| Levels you chose | Can be overridden | Left alone: a prompt with `ultrathink`, a session at `max`, `CLAUDE_CODE_EFFORT_LEVEL`, and an effort changed mid-turn (a skill's `effort` frontmatter) |
 | Data sent to TypeSafe | Prompt (pasted blocks removed), head/tail truncated | Same as upstream, plus masking of code blocks, secrets, URLs, e-mails, IPs and absolute paths |
 | Highest effort | `max` | `xhigh` (configurable) |
-| Cache | Trusts the docs | Watches real `cache_read`/`cache_creation`, warns and then pauses when an effort change loses the cache |
-| Subagents | Inherit the turn's effort; model routed by judgment/delegated | Keep their own effort; model routed as upstream, via `agent.spawn` |
+| Cache | Trusts the docs | Skips setups the docs say lose the cache (Bedrock, Agent Platform, apps gateway, betas off), then watches real `cache_read`/`cache_creation`, warns and pauses when an effort change still loses it |
+| Subagents | Inherit the turn's effort; model routed by judgment/delegated | Keep their own effort; model routed as upstream, via `agent.spawn`, but only for built-in agent types. Agents you defined keep the model their definition names; workflow, resumed and teammate agents are left alone |
 | Runtime | Bun/Node, shell scripts, tool-call hooks | Runs inside Claude Code's engine; no Bun/Node needed |
 
 ## Install
@@ -48,6 +49,15 @@ If your organization sets `allowManagedModsOnly` or `allowManagedHooksOnly` in m
 
 Each routed turn shows a dim line such as `jev → high · verification decides success (conf 0.72)`. The status line shows `jev · <level>` while routing is on. The next turn goes back to the session level unless Jev picks another level.
 
+The router never overrides a level you chose on purpose:
+
+- a prompt containing `ultrathink` runs at the session level and is not sent to Jev;
+- a session at `max` (set with `/effort max`) is never lowered;
+- with `CLAUDE_CODE_EFFORT_LEVEL` set, routing stands down and nothing is sent (`/jev status` says so);
+- if something changes effort mid-turn, such as a skill whose frontmatter sets `effort`, that level stands for the rest of the turn.
+
+`/effort ultracode` reaches the model as `xhigh`, which the router cannot tell apart from a plain `xhigh` session, so it may lower it. Turn routing off (`/jev off`) while you work in ultracode. The agents an ultracode or `workflow` run starts are never routed.
+
 ## Options
 
 | Option | Default | Meaning |
@@ -56,9 +66,11 @@ Each routed turn shows a dim line such as `jev → high · verification decides 
 | `enabled_by_default` | `false` | Start every session with routing on |
 | `max_effort` | `xhigh` | Highest level the router may pick |
 | `route_subagents` | `true` | Route subagent models |
+| `route_custom_subagents` | `false` | Also route agents from your settings or plugins. Off, they keep the model their definition names |
+| `route_headless` | `false` | Also route `claude -p`, Agent SDK and CI runs. Off, only prompts typed in a session or sent by Remote Control |
 | `judgment_model` / `delegated_model` | `opus` / `sonnet` | Model for review/debug/design subagents, and for subagents doing delegated work |
 | `redact` | `true` | Mask data before sending (see below) |
-| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Fable 5.1 |
+| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1, and not with `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_GATEWAY` or `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` set; nothing is sent to Jev in those setups |
 | `cache_guard` | `true` | Warn on the first cache miss, pause on the second |
 | `timeout_ms` | `2500` | How long to wait for Jev before the turn runs at the session level |
 | `show_decisions` | `true` | Show the `jev → …` line |
@@ -67,7 +79,7 @@ Each routed turn shows a dim line such as `jev → high · verification decides 
 
 ## What gets sent
 
-Only while routing is on, and only for prompts you type (no slash commands, notifications, or messages from other sessions). Each turn makes **one** request to `api.typesafe.ai/v1/systemone`, containing:
+Only while routing is on, and only for prompts you type or send by Remote Control (no slash commands, `ultrathink` prompts, notifications, messages from other sessions, or `claude -p` runs unless `route_headless` is on). Each turn makes **one** request to `api.typesafe.ai/v1/systemone`, containing:
 
 - the current prompt after filtering, at most the first 3,000 and last 1,000 characters;
 - the first 1,500 characters of the previous prompt (filtered), so Jev recognizes "ok, go ahead";
@@ -92,8 +104,8 @@ Locally, decisions are kept in the mod's `$.store` (at most 200 entries, each th
 
 ## Test results
 
-- `bun test ./test`: 79 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
-- `claude plugin test .`: 18 tests running the mod on Claude Code's real engine (per-turn routing, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`). Three key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models) to confirm the tests catch each one.
+- `bun test ./test`: 89 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
+- `claude plugin test .`: 32 tests running the mod on Claude Code's real engine (per-turn routing, the levels you chose, cache-safe setups, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`), last run on Claude Code 2.1.310. Key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models; in 0.2.0 the workflow-agent skip, the agent-source check, the mid-turn baseline, the `max` floor, the env stand-down and the `ultrathink` skip) to confirm the tests catch each one.
 - `claude plugin validate .` and `tsc` are clean.
 - **Real run in a headless Claude Code 2.1.289 session** (Sonnet 5.5), against a mock Jev server on localhost:
   - The transcript records `effort: high` / `low` correctly for each routed turn, so the effort really reaches the API.
@@ -103,6 +115,7 @@ Locally, decisions are kept in the mod's `$.store` (at most 200 entries, each th
 1. TypeSafe has not been called for real (no key), so the 97% accuracy is upstream's number, measured on unfiltered English prompts. The filter changes none of upstream's 42 fixtures, since they contain no code or sensitive data; your real prompts will differ. Run `TYPESAFE_API_KEY=… bun eval/run.ts` and `--no-redact` to compare, then add your own real prompts to `eval/fixtures.local.jsonl`.
 2. Not tested on a machine with a subscription calling the API directly. Per the docs, effort changes keep the cache there; check the `Prompt cache (main)` line in `/usage`, or let the cache guard check for you.
 3. Subagent routing has not been tested in a real session, only through the engine test suite.
+4. That a skill's `effort` frontmatter shows up as a changed `effort` on the turn's later steps is the engine's documented behaviour for `turn.step` (the session's setting), not yet seen in a real session. If it does not, the mid-turn rule simply never fires.
 
 ## Development
 
