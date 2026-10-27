@@ -66,10 +66,38 @@ export class CacheGuard {
 }
 
 // Models whose per-request effort change keeps the cache, per the Claude Code prompt-caching
-// docs (2.1.260+). Provider-prefixed ids (Bedrock, Vertex) still match here; the guard above
-// is what catches those, since the docs say the cache is not kept there.
-const CACHE_SAFE_MODEL = /claude-(?:opus-5-5|sonnet-5-5|fable-5-1)\b/i;
+// docs (2.1.260+): Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1, with an API key or a Claude
+// subscription. Provider-prefixed ids (Bedrock, Vertex) still match here; cacheUnsafeEnv below
+// rules those setups out up front, and the guard above catches whatever it misses.
+const CACHE_SAFE_MODEL = /claude-(?:opus-5-5|sonnet-5-5|haiku-5-5|fable-5-1)\b/i;
 
 export function isCacheSafeModel(model: string): boolean {
   return CACHE_SAFE_MODEL.test(model);
+}
+
+// Setups where the docs say an effort change loses the cache on every model: Amazon Bedrock
+// (and its Mantle endpoint), Google Cloud's Agent Platform (Vertex), and
+// CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS. Checking them up front saves the two paid misses the
+// guard would need to find out. A Claude apps gateway is chosen by signing in, not by an env
+// var: isGatewayLogin reads the setting that sends /login there. A custom ANTHROPIC_BASE_URL
+// is left to the guard: whether it keeps the cache depends on the gateway.
+export const CACHE_UNSAFE_ENV = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+] as const;
+
+// `forceLoginMethod: "gateway"` restricts sign-in to a Claude apps gateway, where the docs say
+// an effort change does not keep the cache.
+export function isGatewayLogin(forceLoginMethod: unknown): boolean {
+  return typeof forceLoginMethod === "string" && forceLoginMethod.trim().toLowerCase() === "gateway";
+}
+
+export function cacheUnsafeEnv(env: Partial<Record<string, string | undefined>>): string | null {
+  for (const name of CACHE_UNSAFE_ENV) {
+    const value = env[name]?.trim().toLowerCase();
+    if (value && value !== "0" && value !== "false") return name;
+  }
+  return null;
 }

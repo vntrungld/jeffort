@@ -24,10 +24,16 @@ function effortAnswers(reply: JevReply) {
 }
 
 // Everything beneath the mod. `replies` answers Jev requests in order; `null` never answers.
-function world(on: On, replies: (JevReply | null)[] = []) {
+type Sources = Partial<Record<"user" | "project" | "local" | "flag" | "policy", Record<string, unknown>>>;
+
+function world(on: On, replies: (JevReply | null)[] = [], env: Record<string, string> = {}, settings: Sources = {}) {
   const clock = mock.clock(on, { now: 1_000_000 });
   mock.store(on);
-  mock.env(on, {});
+  mock.env(on, env);
+  // One source as loaded, or a shallow merge of all of them for a key read.
+  on("settings.read", async (_$, e) => ({
+    value: e.source ? (settings[e.source] ?? {}) : Object.assign({}, ...Object.values(settings)),
+  }));
   const fetched: Fetched[] = [];
   const steps: { agentId?: string; effort?: unknown; model: string }[] = [];
   const logs: string[] = [];
@@ -58,6 +64,7 @@ function world(on: On, replies: (JevReply | null)[] = []) {
   on("prompt.submit", async (_$, e) => ({ text: e.text }));
   on("turn.start", async (_$, e) => ({ turnId: e.turnId }));
   on("turn.complete", async (_$, e) => ({ text: e.answer }));
+  on("agent.offer", async () => ({ isOffered: true }));
   on("agent.spawn", async (_$, e) => ({ model: e.model ?? e.parentModel, agentId: "agent-1" }));
   on("turn.step", async function* (_$, e): AsyncGenerator<never, TurnStepResult> {
     steps.push({ agentId: e.agentId, effort: e.effort, model: e.model });
@@ -94,7 +101,7 @@ async function drain<C, R>(stream: AsyncGenerator<C, R> & { result: Promise<R> }
 async function prompt(
   $: Engine,
   text: string,
-  options: { turnId: string; steps?: number; model?: string; effort?: string; origin?: "composer" | "task-notification" },
+  options: { turnId: string; steps?: number; model?: string; effort?: string; origin?: "composer" | "bridge" | "sdk" | "task-notification" },
 ) {
   await $.prompt.submit({ text, wait: false, origin: { kind: options.origin ?? "composer" } } as never);
   await $.turn.start({ text, turnId: options.turnId });
@@ -187,6 +194,111 @@ describe("effort routing", () => {
   });
 });
 
+describe("choices the person made stand", () => {
+  test("a prompt with ultrathink is not routed or sent", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 0.1, confidence: 0.9 }]);
+    await prompt($, "ultrathink: why does the payout job double-charge?", { turnId: "t1", effort: "high" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("high");
+  });
+
+  test("a session at max is never lowered", { options: { ...ON, max_effort: "max" } }, async ($, on) => {
+    const w = world(on, [{ score: 1.1, confidence: 0.9 }]);
+    await prompt($, "add a CSV export button to the reports page", { turnId: "t1", effort: "max" });
+    expect(w.steps[0]?.effort).toBe("max");
+  });
+
+  test("CLAUDE_CODE_EFFORT_LEVEL pins effort: nothing is sent", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], { CLAUDE_CODE_EFFORT_LEVEL: "low" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1", effort: "low" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("low");
+    const status = await $.command.run({
+      command: "jev",
+      args: "status",
+      origin: { kind: "composer" },
+      presentation: { isFullscreen: false, columns: 120 },
+    } as never);
+    expect(status.text).toContain("standing down (CLAUDE_CODE_EFFORT_LEVEL=low pins effort)");
+  });
+
+  test("CLAUDE_CODE_EFFORT_LEVEL=auto is the model default, not a pin: routed", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.9 }], { CLAUDE_CODE_EFFORT_LEVEL: "auto" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.fetched.length).toBe(1);
+    expect(w.steps[0]?.effort).toBe("high");
+  });
+
+  test("maxEffortLevel in settings caps the routed level", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.8, confidence: 0.9 }], {}, { user: { maxEffortLevel: "xhigh" }, policy: { maxEffortLevel: "high" } });
+    await prompt($, "write an HTML sanitizer that strips every way to smuggle JavaScript", { turnId: "t1" });
+    expect(w.steps[0]?.effort).toBe("high");
+    expect(w.logs.some((l) => l.startsWith("jev → high") && l.includes("maxEffortLevel caps at high"))).toBe(true);
+  });
+
+  test("a model's own maxEffortLevel entry applies to that model", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.9 }], {}, { user: { modelSettings: { [OPUS_55]: { maxEffortLevel: "medium" } } } });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1", effort: "low" });
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
+  test("an effort changed mid-turn (a skill's frontmatter) is kept", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 1.1, confidence: 0.9 }]);
+    await $.prompt.submit({ text: "add a csv export", wait: false, origin: { kind: "composer" } } as never);
+    await $.turn.start({ text: "add a csv export", turnId: "t1" });
+    await drain($.turn.step({ turnId: "t1", index: 0, model: OPUS_55, effort: "high", messageCount: 3 }));
+    await drain($.turn.step({ turnId: "t1", index: 1, model: OPUS_55, effort: "xhigh", messageCount: 5 }));
+    expect(w.steps.map((s) => s.effort)).toEqual(["medium", "xhigh"]);
+  });
+
+  test("claude -p is not routed unless route_headless is on", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 0.1, confidence: 0.9 }]);
+    await prompt($, "summarize the diff", { turnId: "t1", origin: "sdk" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
+  test("claude -p is routed with route_headless", { options: { ...ON, route_headless: true } }, async ($, on) => {
+    const w = world(on, [{ score: 0.1, confidence: 0.9 }]);
+    await prompt($, "summarize the diff", { turnId: "t1", origin: "sdk" });
+    expect(w.steps[0]?.effort).toBe("low");
+  });
+
+  test("Remote Control prompts are routed", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 0.1, confidence: 0.9 }]);
+    await prompt($, "rename getUser to fetchUser", { turnId: "t1", origin: "bridge" });
+    expect(w.steps[0]?.effort).toBe("low");
+  });
+});
+
+describe("cache-safe setups", () => {
+  test("Haiku 5.5 keeps the cache on an effort change, so it is routed", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 0.1, confidence: 0.9 }]);
+    await prompt($, "rename getUser to fetchUser", { turnId: "t1", model: "claude-haiku-5-5" });
+    expect(w.steps[0]?.effort).toBe("low");
+  });
+
+  test("on Bedrock nothing is sent, since the change could not be applied", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], { CLAUDE_CODE_USE_BEDROCK: "1" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
+  test("signed in through a Claude apps gateway, nothing is sent", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], {}, { policy: { forceLoginMethod: "gateway" } });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
+  test("with cache_safe_only off, Bedrock is routed", { options: { ...ON, cache_safe_only: false } }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.9 }], { CLAUDE_CODE_USE_BEDROCK: "1" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.steps[0]?.effort).toBe("high");
+  });
+});
+
 describe("what leaves the machine", () => {
   test("code, secrets, URLs, e-mails, IPs and absolute paths are replaced", { options: ON }, async ($, on) => {
     const w = world(on, [{ score: 2.1 }]);
@@ -242,6 +354,8 @@ describe("cache guard", () => {
 });
 
 describe("subagent model routing", () => {
+  const offer = ($: Engine, agent: string, source: string) =>
+    $.agent.offer({ agent, description: agent, source, provider: { plugin: "engine", tier: "core" } } as never);
   const spawn = (overrides: Record<string, unknown> = {}) => ({
     tool_use_id: "tu-1",
     prompt: "Review the diff in /home/duc/ownego/koin/src for auth bugs",
@@ -256,6 +370,7 @@ describe("subagent model routing", () => {
 
   test("judgment work goes to the judgment model", { options: ON }, async ($, on) => {
     const w = world(on, [{ work: "judgment", workConfidence: 0.8 }]);
+    await offer($, "general-purpose", "built-in");
     const result = await $.agent.spawn(spawn({ model: "sonnet" }) as never);
     expect(result.model).toBe("opus");
     expect(w.fetched[0]?.body.state.subagent_task).not.toContain("/home/duc");
@@ -264,6 +379,7 @@ describe("subagent model routing", () => {
 
   test("delegated work goes to the delegated model", { options: ON }, async ($, on) => {
     world(on, [{ work: "delegated", workConfidence: 0.9 }]);
+    await offer($, "general-purpose", "built-in");
     const result = await $.agent.spawn(spawn({ prompt: "Find every caller of getUser" }) as never);
     expect(result.model).toBe("sonnet");
   });
@@ -277,8 +393,40 @@ describe("subagent model routing", () => {
 
   test("can be turned off", { options: { ...ON, route_subagents: false } }, async ($, on) => {
     const w = world(on, [{ work: "judgment" }]);
+    await offer($, "general-purpose", "built-in");
     await $.agent.spawn(spawn() as never);
     expect(w.fetched.length).toBe(0);
+  });
+
+  test("workflow, resumed and teammate agents are left alone", { options: ON }, async ($, on) => {
+    const w = world(on, [{ work: "judgment" }, { work: "judgment" }, { work: "judgment" }]);
+    await offer($, "general-purpose", "built-in");
+    const wf = await $.agent.spawn(spawn({ workflow: { runId: "wf_1", agentIndex: 1 } }) as never);
+    await $.agent.spawn(spawn({ resume: { agentId: "agent-0" } }) as never);
+    await $.agent.spawn(spawn({ isTeammate: true, name: "scout" }) as never);
+    expect(w.fetched.length).toBe(0);
+    expect(wf.model).toBe(OPUS_55);
+  });
+
+  test("an agent someone defined keeps its own model", { options: ON }, async ($, on) => {
+    const w = world(on, [{ work: "delegated", workConfidence: 0.9 }]);
+    await offer($, "code-reviewer", "projectSettings");
+    const result = await $.agent.spawn(spawn({ subagentType: "code-reviewer" }) as never);
+    expect(w.fetched.length).toBe(0);
+    expect(result.model).toBe(OPUS_55);
+  });
+
+  test("an agent never offered is left alone", { options: ON }, async ($, on) => {
+    const w = world(on, [{ work: "delegated" }]);
+    await $.agent.spawn(spawn({ subagentType: "mystery" }) as never);
+    expect(w.fetched.length).toBe(0);
+  });
+
+  test("route_custom_subagents opts defined agents in", { options: { ...ON, route_custom_subagents: true } }, async ($, on) => {
+    world(on, [{ work: "delegated", workConfidence: 0.9 }]);
+    await offer($, "code-reviewer", "userSettings");
+    const result = await $.agent.spawn(spawn({ subagentType: "code-reviewer" }) as never);
+    expect(result.model).toBe("sonnet");
   });
 });
 

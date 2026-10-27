@@ -75,3 +75,13 @@ test("promptKey ignores whitespace differences", () => {
 test("an import alias is not a path", () => {
   expect(redact("Cannot find module '@/lib/utils'").text).toBe("Cannot find module '@/lib/utils'");
 });
+
+describe("ultrathink", () => {
+  test.each(["ultrathink: why is the payout job slow?", "fix the race, ULTRATHINK", "nghĩ kỹ đi ultrathink"])("%p is skipped", (raw) => {
+    expect(shapePrompt(raw)).toEqual({ skip: true, reason: "ultrathink" });
+  });
+
+  test("a word that only contains it is not", () => {
+    expect(shapePrompt("rename ultrathinking to deepthink").skip).toBe(false);
+  });
+});

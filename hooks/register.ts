@@ -10,15 +10,20 @@
 //   turn.start     asks Jev once per marked prompt, before the turn's first request
 //   turn.step      sends each main-loop request of that turn at the routed level
 //   turn.complete  forgets the turn; the next prompt starts at the session level again
-//   agent.spawn    picks a subagent's model from the kind of work it is given
+//   agent.offer    notes where each agent type is defined (built-in or someone's own)
+//   agent.spawn    picks a built-in subagent's model from the kind of work it is given
 //
 // Everything fails open: no key, a timeout, an error or an unsure answer leaves the turn at
 // the session's own effort. Subagents keep their own effort; only their model is routed.
+//
+// A level the person chose on purpose is left alone: a prompt with `ultrathink`, a session at
+// `max`, effort pinned by CLAUDE_CODE_EFFORT_LEVEL, a change made mid-turn (a skill's
+// frontmatter), and workflow, resumed and teammate agents.
 
 import type { EngineInterface, Register } from "claude-code";
-import { CacheGuard, isCacheSafeModel } from "./lib/cache-guard.ts";
+import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel, isGatewayLogin } from "./lib/cache-guard.ts";
 import { buildRequest, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, isAllowedBaseUrl, parseResponse, type JevAnswers, type Question } from "./lib/jev.ts";
-import { capLevel, decideEffort, decideSubagentModel, isLevel, readEffortAnswers, SKIPPED_SUBAGENT_TYPES, type Level } from "./lib/policy.ts";
+import { capLevel, decideEffort, decideSubagentModel, effortPin, isLevel, isRoutableAgentSource, readEffortAnswers, settingsEffortCap, SKIPPED_SUBAGENT_TYPES, type Level } from "./lib/policy.ts";
 import { effortQuestions, subagentQuestions, type EffortState, type SubagentState } from "./lib/questions.ts";
 import { preview, promptKey, redact, shapePrompt, truncate } from "./lib/redact.ts";
 
@@ -26,7 +31,9 @@ const PREVIOUS_REQUEST_CHARS = 1500;
 const MAX_MARKED_PROMPTS = 20;
 const RECENT_DECISIONS = 8;
 const STORED_DECISIONS = 200;
-const ROUTED_ORIGINS = new Set(["composer", "bridge", "sdk"]);
+// Typed at a terminal or sent from a phone (Remote Control). `sdk` (`claude -p`, the Agent
+// SDK, CI such as claude-code-action) only with route_headless: nobody watches those runs.
+const INTERACTIVE_ORIGINS = new Set(["composer", "bridge"]);
 
 type Decision = {
   at: number;
@@ -42,13 +49,19 @@ type Decision = {
   redactions?: number;
 };
 
-type Route = { level: Level; decision: Decision; logged: boolean };
+// `baseline` is the effort the turn's first main-loop step came with. A later step that comes
+// with another one was changed mid-turn by something else (a skill's `effort` frontmatter,
+// /effort), and that choice stands. `settings` holds each settings source as loaded when the
+// turn started, for the `maxEffortLevel` cap, which can differ per model.
+type Route = { level: Level; decision: Decision; logged: boolean; baseline?: string | number; settings: unknown[] };
 
 type Config = {
   apiKey: string | undefined;
   enabledByDefault: boolean;
   maxEffort: Level;
   routeSubagents: boolean;
+  routeCustomSubagents: boolean;
+  routeHeadless: boolean;
   judgmentModel: string;
   delegatedModel: string;
   redact: boolean;
@@ -72,6 +85,10 @@ const session = {
   routed: new Map<string, Route>(),
   recent: [] as Decision[],
   guard: new CacheGuard(),
+  // Where each agent type is defined, from agent.offer: `built-in`, `plugin`, a settings source.
+  agentSources: new Map<string, string>(),
+  // Why routing stands down without asking Jev: the env var that pins effort or loses the cache.
+  standDown: null as string | null,
 };
 
 export const register: Register = (on, options) => {
@@ -80,6 +97,8 @@ export const register: Register = (on, options) => {
     enabledByDefault: options.enabled_by_default === true,
     maxEffort: (isLevel(options.max_effort) ? options.max_effort : "xhigh") as Level,
     routeSubagents: options.route_subagents !== false,
+    routeCustomSubagents: options.route_custom_subagents === true,
+    routeHeadless: options.route_headless === true,
     judgmentModel: text(options.judgment_model) ?? "opus",
     delegatedModel: text(options.delegated_model) ?? "sonnet",
     redact: options.redact !== false,
@@ -127,7 +146,8 @@ export const register: Register = (on, options) => {
   // Only prompts the person sent start a routed turn. One typed while a turn runs is folded
   // into that turn (e.turnId set) and is left alone, as are notifications and peers.
   on("prompt.submit", async ($, e, next) => {
-    if (session.enabled && !e.turnId && ROUTED_ORIGINS.has(e.origin.kind)) {
+    const routedOrigin = INTERACTIVE_ORIGINS.has(e.origin.kind) || (config.routeHeadless && e.origin.kind === "sdk");
+    if (session.enabled && !e.turnId && routedOrigin) {
       const key = promptKey(e.text);
       if (key) {
         session.marked.set(key, (session.marked.get(key) ?? 0) + 1);
@@ -145,7 +165,13 @@ export const register: Register = (on, options) => {
     else session.marked.delete(markedKey);
 
     const shaped = shapePrompt(e.text, { redact: config.redact });
-    if (shaped.skip) return next(e);
+    if (shaped.skip) {
+      if (shaped.reason === "ultrathink") await remember($, skipped(await $.clock.now(), "ultrathink: left at the session level"));
+      return next(e);
+    }
+    // Asking Jev when the answer cannot be applied would only send the prompt out for nothing.
+    session.standDown = await standDownReason($);
+    if (session.standDown) return next(e);
     const key = await apiKey($);
     if (!key) return next(e);
 
@@ -172,7 +198,7 @@ export const register: Register = (on, options) => {
       redactions: shaped.redactions,
     };
     await remember($, decision);
-    if (level) session.routed.set(e.turnId, { level, decision, logged: false });
+    if (level) session.routed.set(e.turnId, { level, decision, logged: false, settings: await settingsSources($) });
     showStatus($);
     return next(e);
   });
@@ -183,19 +209,30 @@ export const register: Register = (on, options) => {
 
     const route = session.enabled ? session.routed.get(e.turnId) : undefined;
     const current = e.effort;
+    if (route && route.baseline === undefined && current !== undefined) route.baseline = current;
     const routable =
       route !== undefined &&
       typeof current === "string" &&
       isLevel(current) &&
+      // A session at max was set on purpose for this session only; the router never lowers it.
+      current !== "max" &&
+      current === route.baseline &&
       (!config.cacheSafeOnly || isCacheSafeModel(e.model));
-    const sent = routable && current !== route.level ? { ...e, effort: route.level } : e;
+    // Never ask for more than maxEffortLevel allows for this model.
+    const cap = route ? settingsEffortCap(route.settings, e.model) : null;
+    const target = route ? (cap ? capLevel(route.level, cap) : route.level) : undefined;
+    const sent = routable && target && current !== target ? { ...e, effort: target } : e;
 
-    if (route && !route.logged) {
+    if (route && target && !route.logged) {
       route.logged = true;
       route.decision.applied = sent !== e;
       route.decision.sessionLevel = typeof current === "string" ? current : null;
+      if (target !== route.level) {
+        route.decision.level = target;
+        route.decision.reasons = [...route.decision.reasons, `maxEffortLevel caps at ${target}`];
+      }
       if (sent !== e && config.showDecisions) {
-        $.ui.log(`jev → ${route.level} · ${route.decision.reasons.join(", ")} (conf ${route.decision.confidence?.toFixed(2)})`);
+        $.ui.log(`jev → ${target} · ${route.decision.reasons.join(", ")} (conf ${route.decision.confidence?.toFixed(2)})`);
       }
     }
 
@@ -225,8 +262,17 @@ export const register: Register = (on, options) => {
     return next(e);
   });
 
+  on("agent.offer", async ($, e, next) => {
+    session.agentSources.set(e.agent, e.source);
+    return next(e);
+  });
+
   on("agent.spawn", async ($, e, next) => {
     if (!session.enabled || !config.routeSubagents || e.fork || SKIPPED_SUBAGENT_TYPES.has(e.subagentType)) return next(e);
+    // A workflow script picked its agents' models itself; a resumed agent ignores a new one;
+    // a teammate is a long-lived member of the team, not a delegated task.
+    if (e.workflow || e.resume || e.isTeammate) return next(e);
+    if (!isRoutableAgentSource(session.agentSources.get(e.subagentType), config.routeCustomSubagents)) return next(e);
     const task = e.prompt.trim();
     if (!task) return next(e);
     const key = await apiKey($);
@@ -309,6 +355,54 @@ async function remember($: EngineInterface, decision: Decision): Promise<void> {
   }
 }
 
+// Effort pinned by the environment, or a provider where every effort change loses the cache.
+// $.env.get takes literal names only, so the engine can list what the module reads.
+async function standDownReason($: EngineInterface): Promise<string | null> {
+  const pin = effortPin(await $.env.get("CLAUDE_CODE_EFFORT_LEVEL"));
+  if (pin) return `CLAUDE_CODE_EFFORT_LEVEL=${pin} pins effort`;
+  if (!config.cacheSafeOnly) return null;
+  const unsafe = cacheUnsafeEnv({
+    CLAUDE_CODE_USE_BEDROCK: await $.env.get("CLAUDE_CODE_USE_BEDROCK"),
+    CLAUDE_CODE_USE_MANTLE: await $.env.get("CLAUDE_CODE_USE_MANTLE"),
+    CLAUDE_CODE_USE_VERTEX: await $.env.get("CLAUDE_CODE_USE_VERTEX"),
+    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: await $.env.get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"),
+  });
+  if (unsafe) return `${unsafe} is set: effort changes lose the prompt cache there`;
+  if (isGatewayLogin(await readSetting($, "forceLoginMethod"))) {
+    return "signed in through a Claude apps gateway: effort changes lose the prompt cache there";
+  }
+  return null;
+}
+
+const SETTINGS_SOURCES = ["user", "project", "local", "flag", "policy"] as const;
+
+// Each settings source as loaded, for settingsEffortCap: a cap is resolved within one source
+// before the lowest across sources wins, so the merged object would not do. A source that
+// cannot be read counts as empty; Claude Code applies the cap itself before each request too.
+async function settingsSources($: EngineInterface): Promise<unknown[]> {
+  const sources: unknown[] = [];
+  for (const source of SETTINGS_SOURCES) {
+    try {
+      sources.push(await $.settings.read({ source }));
+    } catch {
+      // fail open
+    }
+  }
+  return sources;
+}
+
+async function readSetting($: EngineInterface, key: string): Promise<unknown> {
+  try {
+    return await $.settings.read({ key });
+  } catch {
+    return undefined;
+  }
+}
+
+function skipped(at: number, reason: string): Decision {
+  return { at, kind: "effort", preview: "", level: null, reasons: [reason] };
+}
+
 function showStatus($: EngineInterface): void {
   $.ui.status(session.enabled ? (session.lastLevel ? `jev · ${session.lastLevel}` : "jev") : undefined);
 }
@@ -327,11 +421,14 @@ function setEnabled($: EngineInterface, value: boolean): void {
 
 async function statusText($: EngineInterface): Promise<string> {
   const key = (await apiKey($)) ? "key set" : "no key";
-  const state = session.enabled ? "ON" : session.pausedReason ? `PAUSED (${session.pausedReason})` : "OFF";
-  const head = `Jev routing is ${state} · ${key} · up to ${config.maxEffort} · redaction ${config.redact ? "on" : "off"} · cache-safe models only: ${config.cacheSafeOnly ? "yes" : "no"}`;
+  const state = session.enabled
+    ? session.standDown ? `ON but standing down (${session.standDown})` : "ON"
+    : session.pausedReason ? `PAUSED (${session.pausedReason})` : "OFF";
+  const head = `Jev routing is ${state} · ${key} · up to ${config.maxEffort} · redaction ${config.redact ? "on" : "off"} · cache-safe models only: ${config.cacheSafeOnly ? "yes" : "no"} · claude -p: ${config.routeHeadless ? "routed" : "not routed"}`;
   if (session.recent.length === 0) return `${head}\nNo decisions yet.`;
   const lines = session.recent.map((d) => {
     if (d.kind === "subagent") return `- subagent → ${d.model ?? "unchanged"} (${d.reasons.join(", ")}) · "${d.preview}"`;
+    if (d.confidence === undefined && d.level === null) return `- unchanged · ${d.reasons.join(", ")}`;
     const level = d.level ?? "unchanged";
     const applied = d.applied === undefined ? "" : d.applied ? ` (session ${d.sessionLevel ?? "?"})` : " (not applied)";
     const conf = d.confidence === undefined ? "" : ` · conf ${d.confidence.toFixed(2)}`;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CacheGuard, isCacheSafeModel } from "../hooks/lib/cache-guard.ts";
+import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel, isGatewayLogin } from "../hooks/lib/cache-guard.ts";
 import { buildRequest, isAllowedBaseUrl, parseResponse } from "../hooks/lib/jev.ts";
 import { effortQuestions } from "../hooks/lib/questions.ts";
 
@@ -105,10 +105,39 @@ test.each([
   ["claude-opus-5-5[1m]", true],
   ["claude-sonnet-5-5-20261001", true],
   ["claude-fable-5-1", true],
+  ["claude-haiku-5-5", true],
+  ["claude-haiku-4-5", false],
   ["claude-opus-5", false],
   ["claude-fable-5", false],
   ["claude-sonnet-5", false],
   ["claude-opus-4-8", false],
 ] as const)("cache-safe model %s: %p", (model, safe) => {
   expect(isCacheSafeModel(model)).toBe(safe);
+});
+
+describe("cacheUnsafeEnv", () => {
+  test("names the first provider setting that loses the cache on an effort change", () => {
+    expect(cacheUnsafeEnv({})).toBeNull();
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_BEDROCK: "1" })).toBe("CLAUDE_CODE_USE_BEDROCK");
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_VERTEX: "true" })).toBe("CLAUDE_CODE_USE_VERTEX");
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1" })).toBe("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS");
+  });
+
+  test("0, false and empty count as unset", () => {
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_BEDROCK: "0", CLAUDE_CODE_USE_VERTEX: "false", CLAUDE_CODE_USE_MANTLE: " " })).toBeNull();
+  });
+
+  test("reads no made-up gateway variable: the apps gateway is chosen by signing in", () => {
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_GATEWAY: "1" })).toBeNull();
+  });
+});
+
+describe("isGatewayLogin", () => {
+  test("forceLoginMethod gateway means a Claude apps gateway session", () => {
+    expect(isGatewayLogin("gateway")).toBe(true);
+    expect(isGatewayLogin(" Gateway ")).toBe(true);
+    expect(isGatewayLogin("claudeai")).toBe(false);
+    expect(isGatewayLogin("console")).toBe(false);
+    expect(isGatewayLogin(undefined)).toBe(false);
+  });
 });

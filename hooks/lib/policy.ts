@@ -122,6 +122,16 @@ function clampIndex(index: number): number {
 // Lookup agents keep their own defaults; fork ignores `model` entirely.
 export const SKIPPED_SUBAGENT_TYPES = new Set(["fork", "Explore", "claude-code-guide", "statusline-setup"]);
 
+// Where an agent type is defined, as `agent.offer` reports it (`built-in`, `plugin`,
+// `userSettings`, `projectSettings`, ...). An agent someone defined may name its own `model`
+// in frontmatter; the Agent call's `model` outranks it, so routing such an agent would
+// silently replace that choice. Only built-in types are routed unless the person opts in.
+// A type never offered is treated as defined elsewhere: leaving it alone is the safe side.
+export function isRoutableAgentSource(source: string | undefined, routeCustom: boolean): boolean {
+  if (source === "built-in") return true;
+  return routeCustom && source !== undefined;
+}
+
 export type SubagentModels = { judgment: string; delegated: string };
 export type SubagentDecision = { model: string | null; work: SubagentWork | null; reason: string };
 
@@ -163,4 +173,31 @@ export function levelIndex(level: Level): number {
 // default ceiling is xhigh and max is opt-in.
 export function capLevel(level: Level, max: Level): Level {
   return levelIndex(level) > levelIndex(max) ? max : level;
+}
+
+// The `maxEffortLevel` cap the person or their organization set in settings, for one model.
+// Per the settings reference: each source may set a top-level cap, and a model's
+// `modelSettings` entry replaces it for that model within the same source (`"max"` there
+// exempts the model from that source's cap); across sources the lowest cap applies, and
+// `"max"` sets no cap. Claude Code applies the cap before each request too; the router keeps
+// to it so a routed level never asks for more than the person allowed.
+export function settingsEffortCap(sources: readonly unknown[], model: string): Level | null {
+  const id = model.replace(/\[1m\]$/i, "");
+  let cap: Level | null = null;
+  for (const settings of sources) {
+    if (!settings || typeof settings !== "object") continue;
+    const s = settings as { maxEffortLevel?: unknown; modelSettings?: Record<string, { maxEffortLevel?: unknown } | undefined> };
+    const perModel = s.modelSettings && typeof s.modelSettings === "object" ? (s.modelSettings[model] ?? s.modelSettings[id]) : undefined;
+    const value = perModel && perModel.maxEffortLevel !== undefined ? perModel.maxEffortLevel : s.maxEffortLevel;
+    if (!isLevel(value) || value === "max") continue;
+    if (cap === null || levelIndex(value) < levelIndex(cap)) cap = value;
+  }
+  return cap;
+}
+
+// CLAUDE_CODE_EFFORT_LEVEL pins effort to a level; `auto` means the model's default, which is
+// the level the router starts from anyway, so only a concrete level counts as a pin.
+export function effortPin(value: string | undefined): string | null {
+  const v = value?.trim().toLowerCase();
+  return v && v !== "auto" ? v : null;
 }

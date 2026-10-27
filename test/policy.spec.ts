@@ -1,6 +1,6 @@
 // Ported from jjjjjjjjjjjjjjjjacob/jev-router (MIT), test/policy.test.ts, plus capLevel.
 import { describe, expect, test } from "bun:test";
-import { capLevel, decideEffort, decideSubagentModel, readEffortAnswers, type EffortAnswers } from "../hooks/lib/policy.ts";
+import { capLevel, decideEffort, decideSubagentModel, effortPin, isRoutableAgentSource, readEffortAnswers, settingsEffortCap, type EffortAnswers } from "../hooks/lib/policy.ts";
 import type { Signal } from "../hooks/lib/questions.ts";
 
 function answers(score: number, signals: Partial<Record<Signal, number>> = {}, confidence = 0.8): EffortAnswers {
@@ -144,5 +144,55 @@ describe("capLevel", () => {
     expect(capLevel("max", "xhigh")).toBe("xhigh");
     expect(capLevel("xhigh", "high")).toBe("high");
     expect(capLevel("medium", "xhigh")).toBe("medium");
+  });
+});
+
+describe("isRoutableAgentSource", () => {
+  test("built-in agents are routed; agents someone defined only when opted in", () => {
+    expect(isRoutableAgentSource("built-in", false)).toBe(true);
+    expect(isRoutableAgentSource("projectSettings", false)).toBe(false);
+    expect(isRoutableAgentSource("plugin", false)).toBe(false);
+    expect(isRoutableAgentSource("userSettings", true)).toBe(true);
+  });
+
+  test("an agent never offered is left alone, opted in or not", () => {
+    expect(isRoutableAgentSource(undefined, false)).toBe(false);
+    expect(isRoutableAgentSource(undefined, true)).toBe(false);
+  });
+});
+
+describe("settingsEffortCap", () => {
+  const OPUS = "claude-opus-5-5";
+
+  test("no cap anywhere, or max, is no cap", () => {
+    expect(settingsEffortCap([], OPUS)).toBeNull();
+    expect(settingsEffortCap([{}, { maxEffortLevel: "max" }], OPUS)).toBeNull();
+    expect(settingsEffortCap([{ maxEffortLevel: "bogus" }, null, "x"], OPUS)).toBeNull();
+  });
+
+  test("the lowest cap across sources applies", () => {
+    expect(settingsEffortCap([{ maxEffortLevel: "xhigh" }, { maxEffortLevel: "medium" }, { maxEffortLevel: "high" }], OPUS)).toBe("medium");
+  });
+
+  test("a model entry replaces the top-level cap within its own source only", () => {
+    const user = { maxEffortLevel: "medium", modelSettings: { [OPUS]: { maxEffortLevel: "max" } } };
+    expect(settingsEffortCap([user], OPUS)).toBeNull();
+    expect(settingsEffortCap([user], "claude-sonnet-5-5")).toBe("medium");
+    expect(settingsEffortCap([user, { maxEffortLevel: "high" }], OPUS)).toBe("high");
+    expect(settingsEffortCap([{ modelSettings: { [OPUS]: { maxEffortLevel: "low" } } }], `${OPUS}[1m]`)).toBe("low");
+  });
+
+  test("a model entry without a cap keeps the source's top-level one", () => {
+    expect(settingsEffortCap([{ maxEffortLevel: "high", modelSettings: { [OPUS]: { effortLevel: "low" } } }], OPUS)).toBe("high");
+  });
+});
+
+describe("effortPin", () => {
+  test("a concrete level pins; auto, empty and unset do not", () => {
+    expect(effortPin("low")).toBe("low");
+    expect(effortPin(" HIGH ")).toBe("high");
+    expect(effortPin("auto")).toBeNull();
+    expect(effortPin("  ")).toBeNull();
+    expect(effortPin(undefined)).toBeNull();
   });
 });
