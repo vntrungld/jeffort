@@ -21,9 +21,9 @@
 // frontmatter), and workflow, resumed and teammate agents.
 
 import type { EngineInterface, Register } from "claude-code";
-import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel } from "./lib/cache-guard.ts";
+import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel, isGatewayLogin } from "./lib/cache-guard.ts";
 import { buildRequest, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, isAllowedBaseUrl, parseResponse, type JevAnswers, type Question } from "./lib/jev.ts";
-import { capLevel, decideEffort, decideSubagentModel, isLevel, isRoutableAgentSource, readEffortAnswers, SKIPPED_SUBAGENT_TYPES, type Level } from "./lib/policy.ts";
+import { capLevel, decideEffort, decideSubagentModel, effortPin, isLevel, isRoutableAgentSource, readEffortAnswers, settingsEffortCap, SKIPPED_SUBAGENT_TYPES, type Level } from "./lib/policy.ts";
 import { effortQuestions, subagentQuestions, type EffortState, type SubagentState } from "./lib/questions.ts";
 import { preview, promptKey, redact, shapePrompt, truncate } from "./lib/redact.ts";
 
@@ -51,8 +51,9 @@ type Decision = {
 
 // `baseline` is the effort the turn's first main-loop step came with. A later step that comes
 // with another one was changed mid-turn by something else (a skill's `effort` frontmatter,
-// /effort), and that choice stands.
-type Route = { level: Level; decision: Decision; logged: boolean; baseline?: string | number };
+// /effort), and that choice stands. `settings` holds each settings source as loaded when the
+// turn started, for the `maxEffortLevel` cap, which can differ per model.
+type Route = { level: Level; decision: Decision; logged: boolean; baseline?: string | number; settings: unknown[] };
 
 type Config = {
   apiKey: string | undefined;
@@ -197,7 +198,7 @@ export const register: Register = (on, options) => {
       redactions: shaped.redactions,
     };
     await remember($, decision);
-    if (level) session.routed.set(e.turnId, { level, decision, logged: false });
+    if (level) session.routed.set(e.turnId, { level, decision, logged: false, settings: await settingsSources($) });
     showStatus($);
     return next(e);
   });
@@ -217,14 +218,21 @@ export const register: Register = (on, options) => {
       current !== "max" &&
       current === route.baseline &&
       (!config.cacheSafeOnly || isCacheSafeModel(e.model));
-    const sent = routable && current !== route.level ? { ...e, effort: route.level } : e;
+    // Never ask for more than maxEffortLevel allows for this model.
+    const cap = route ? settingsEffortCap(route.settings, e.model) : null;
+    const target = route ? (cap ? capLevel(route.level, cap) : route.level) : undefined;
+    const sent = routable && target && current !== target ? { ...e, effort: target } : e;
 
-    if (route && !route.logged) {
+    if (route && target && !route.logged) {
       route.logged = true;
       route.decision.applied = sent !== e;
       route.decision.sessionLevel = typeof current === "string" ? current : null;
+      if (target !== route.level) {
+        route.decision.level = target;
+        route.decision.reasons = [...route.decision.reasons, `maxEffortLevel caps at ${target}`];
+      }
       if (sent !== e && config.showDecisions) {
-        $.ui.log(`jev → ${route.level} · ${route.decision.reasons.join(", ")} (conf ${route.decision.confidence?.toFixed(2)})`);
+        $.ui.log(`jev → ${target} · ${route.decision.reasons.join(", ")} (conf ${route.decision.confidence?.toFixed(2)})`);
       }
     }
 
@@ -350,17 +358,45 @@ async function remember($: EngineInterface, decision: Decision): Promise<void> {
 // Effort pinned by the environment, or a provider where every effort change loses the cache.
 // $.env.get takes literal names only, so the engine can list what the module reads.
 async function standDownReason($: EngineInterface): Promise<string | null> {
-  const pin = text(await $.env.get("CLAUDE_CODE_EFFORT_LEVEL"));
+  const pin = effortPin(await $.env.get("CLAUDE_CODE_EFFORT_LEVEL"));
   if (pin) return `CLAUDE_CODE_EFFORT_LEVEL=${pin} pins effort`;
   if (!config.cacheSafeOnly) return null;
   const unsafe = cacheUnsafeEnv({
     CLAUDE_CODE_USE_BEDROCK: await $.env.get("CLAUDE_CODE_USE_BEDROCK"),
     CLAUDE_CODE_USE_MANTLE: await $.env.get("CLAUDE_CODE_USE_MANTLE"),
     CLAUDE_CODE_USE_VERTEX: await $.env.get("CLAUDE_CODE_USE_VERTEX"),
-    CLAUDE_CODE_USE_GATEWAY: await $.env.get("CLAUDE_CODE_USE_GATEWAY"),
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: await $.env.get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"),
   });
-  return unsafe ? `${unsafe} is set: effort changes lose the prompt cache there` : null;
+  if (unsafe) return `${unsafe} is set: effort changes lose the prompt cache there`;
+  if (isGatewayLogin(await readSetting($, "forceLoginMethod"))) {
+    return "signed in through a Claude apps gateway: effort changes lose the prompt cache there";
+  }
+  return null;
+}
+
+const SETTINGS_SOURCES = ["user", "project", "local", "flag", "policy"] as const;
+
+// Each settings source as loaded, for settingsEffortCap: a cap is resolved within one source
+// before the lowest across sources wins, so the merged object would not do. A source that
+// cannot be read counts as empty; Claude Code applies the cap itself before each request too.
+async function settingsSources($: EngineInterface): Promise<unknown[]> {
+  const sources: unknown[] = [];
+  for (const source of SETTINGS_SOURCES) {
+    try {
+      sources.push(await $.settings.read({ source }));
+    } catch {
+      // fail open
+    }
+  }
+  return sources;
+}
+
+async function readSetting($: EngineInterface, key: string): Promise<unknown> {
+  try {
+    return await $.settings.read({ key });
+  } catch {
+    return undefined;
+  }
 }
 
 function skipped(at: number, reason: string): Decision {

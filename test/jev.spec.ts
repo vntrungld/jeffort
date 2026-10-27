@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel } from "../hooks/lib/cache-guard.ts";
+import { CacheGuard, cacheUnsafeEnv, isCacheSafeModel, isGatewayLogin } from "../hooks/lib/cache-guard.ts";
 import { buildRequest, isAllowedBaseUrl, parseResponse } from "../hooks/lib/jev.ts";
 import { effortQuestions } from "../hooks/lib/questions.ts";
 
@@ -124,6 +124,20 @@ describe("cacheUnsafeEnv", () => {
   });
 
   test("0, false and empty count as unset", () => {
-    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_BEDROCK: "0", CLAUDE_CODE_USE_VERTEX: "false", CLAUDE_CODE_USE_GATEWAY: " " })).toBeNull();
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_BEDROCK: "0", CLAUDE_CODE_USE_VERTEX: "false", CLAUDE_CODE_USE_MANTLE: " " })).toBeNull();
+  });
+
+  test("reads no made-up gateway variable: the apps gateway is chosen by signing in", () => {
+    expect(cacheUnsafeEnv({ CLAUDE_CODE_USE_GATEWAY: "1" })).toBeNull();
+  });
+});
+
+describe("isGatewayLogin", () => {
+  test("forceLoginMethod gateway means a Claude apps gateway session", () => {
+    expect(isGatewayLogin("gateway")).toBe(true);
+    expect(isGatewayLogin(" Gateway ")).toBe(true);
+    expect(isGatewayLogin("claudeai")).toBe(false);
+    expect(isGatewayLogin("console")).toBe(false);
+    expect(isGatewayLogin(undefined)).toBe(false);
   });
 });

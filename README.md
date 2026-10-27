@@ -11,7 +11,7 @@ This is a fork of [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjj
 | How effort is applied | Tells Claude to load a `jev-<level>` skill and blocks tool calls until it does | A `turn.step` mod writes `effort` into each request of the turn |
 | Turns that call no tools | May run at the session level (skill skipped) | Still routed |
 | Turns from notifications, peers, plugins | Routed like ordinary prompts | Skipped; only prompts you type (or send by Remote Control) are routed. `claude -p` and the Agent SDK only with `route_headless` |
-| Levels you chose | Can be overridden | Left alone: a prompt with `ultrathink`, a session at `max`, `CLAUDE_CODE_EFFORT_LEVEL`, and an effort changed mid-turn (a skill's `effort` frontmatter) |
+| Levels you chose | Can be overridden | Left alone: a prompt with `ultrathink`, a session at `max`, `CLAUDE_CODE_EFFORT_LEVEL`, an effort changed mid-turn (a skill's `effort` frontmatter), and the `maxEffortLevel` cap in your settings |
 | Data sent to TypeSafe | Prompt (pasted blocks removed), head/tail truncated | Same as upstream, plus masking of code blocks, secrets, URLs, e-mails, IPs and absolute paths |
 | Highest effort | `max` | `xhigh` (configurable) |
 | Cache | Trusts the docs | Skips setups the docs say lose the cache (Bedrock, Agent Platform, apps gateway, betas off), then watches real `cache_read`/`cache_creation`, warns and pauses when an effort change still loses it |
@@ -53,7 +53,8 @@ The router never overrides a level you chose on purpose:
 
 - a prompt containing `ultrathink` runs at the session level and is not sent to Jev;
 - a session at `max` (set with `/effort max`) is never lowered;
-- with `CLAUDE_CODE_EFFORT_LEVEL` set, routing stands down and nothing is sent (`/jev status` says so);
+- with `CLAUDE_CODE_EFFORT_LEVEL` set to a level, routing stands down and nothing is sent (`/jev status` says so); `auto`, the model's default, does not count;
+- a routed level never exceeds `maxEffortLevel` from your settings (top level or a model's `modelSettings` entry; the lowest across settings files applies);
 - if something changes effort mid-turn, such as a skill whose frontmatter sets `effort`, that level stands for the rest of the turn.
 
 `/effort ultracode` reaches the model as `xhigh`, which the router cannot tell apart from a plain `xhigh` session, so it may lower it. Turn routing off (`/jev off`) while you work in ultracode. The agents an ultracode or `workflow` run starts are never routed.
@@ -70,7 +71,7 @@ The router never overrides a level you chose on purpose:
 | `route_headless` | `false` | Also route `claude -p`, Agent SDK and CI runs. Off, only prompts typed in a session or sent by Remote Control |
 | `judgment_model` / `delegated_model` | `opus` / `sonnet` | Model for review/debug/design subagents, and for subagents doing delegated work |
 | `redact` | `true` | Mask data before sending (see below) |
-| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1, and not with `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_GATEWAY` or `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` set; nothing is sent to Jev in those setups |
+| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1, and not with `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` set, nor when settings send sign-in to a Claude apps gateway (`forceLoginMethod: "gateway"`); nothing is sent to Jev in those setups |
 | `cache_guard` | `true` | Warn on the first cache miss, pause on the second |
 | `timeout_ms` | `2500` | How long to wait for Jev before the turn runs at the session level |
 | `show_decisions` | `true` | Show the `jev → …` line |
@@ -104,8 +105,8 @@ Locally, decisions are kept in the mod's `$.store` (at most 200 entries, each th
 
 ## Test results
 
-- `bun test ./test`: 89 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
-- `claude plugin test .`: 32 tests running the mod on Claude Code's real engine (per-turn routing, the levels you chose, cache-safe setups, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`), last run on Claude Code 2.1.310. Key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models; in 0.2.0 the workflow-agent skip, the agent-source check, the mid-turn baseline, the `max` floor, the env stand-down and the `ultrathink` skip) to confirm the tests catch each one.
+- `bun test ./test`: 96 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
+- `claude plugin test .`: 36 tests running the mod on Claude Code's real engine (per-turn routing, the levels you chose, cache-safe setups, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`), last run on Claude Code 2.1.311. Key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models; in 0.2.0 the workflow-agent skip, the agent-source check, the mid-turn baseline, the `max` floor, the env stand-down and the `ultrathink` skip; in 0.2.1 the gateway sign-in check, the `maxEffortLevel` cap and `auto` not pinning) to confirm the tests catch each one.
 - `claude plugin validate .` and `tsc` are clean.
 - **Real run in a headless Claude Code 2.1.289 session** (Sonnet 5.5), against a mock Jev server on localhost:
   - The transcript records `effort: high` / `low` correctly for each routed turn, so the effort really reaches the API.

@@ -24,10 +24,16 @@ function effortAnswers(reply: JevReply) {
 }
 
 // Everything beneath the mod. `replies` answers Jev requests in order; `null` never answers.
-function world(on: On, replies: (JevReply | null)[] = [], env: Record<string, string> = {}) {
+type Sources = Partial<Record<"user" | "project" | "local" | "flag" | "policy", Record<string, unknown>>>;
+
+function world(on: On, replies: (JevReply | null)[] = [], env: Record<string, string> = {}, settings: Sources = {}) {
   const clock = mock.clock(on, { now: 1_000_000 });
   mock.store(on);
   mock.env(on, env);
+  // One source as loaded, or a shallow merge of all of them for a key read.
+  on("settings.read", async (_$, e) => ({
+    value: e.source ? (settings[e.source] ?? {}) : Object.assign({}, ...Object.values(settings)),
+  }));
   const fetched: Fetched[] = [];
   const steps: { agentId?: string; effort?: unknown; model: string }[] = [];
   const logs: string[] = [];
@@ -216,6 +222,26 @@ describe("choices the person made stand", () => {
     expect(status.text).toContain("standing down (CLAUDE_CODE_EFFORT_LEVEL=low pins effort)");
   });
 
+  test("CLAUDE_CODE_EFFORT_LEVEL=auto is the model default, not a pin: routed", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.9 }], { CLAUDE_CODE_EFFORT_LEVEL: "auto" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.fetched.length).toBe(1);
+    expect(w.steps[0]?.effort).toBe("high");
+  });
+
+  test("maxEffortLevel in settings caps the routed level", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.8, confidence: 0.9 }], {}, { user: { maxEffortLevel: "xhigh" }, policy: { maxEffortLevel: "high" } });
+    await prompt($, "write an HTML sanitizer that strips every way to smuggle JavaScript", { turnId: "t1" });
+    expect(w.steps[0]?.effort).toBe("high");
+    expect(w.logs.some((l) => l.startsWith("jev → high") && l.includes("maxEffortLevel caps at high"))).toBe(true);
+  });
+
+  test("a model's own maxEffortLevel entry applies to that model", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.9 }], {}, { user: { modelSettings: { [OPUS_55]: { maxEffortLevel: "medium" } } } });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1", effort: "low" });
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
   test("an effort changed mid-turn (a skill's frontmatter) is kept", { options: ON }, async ($, on) => {
     const w = world(on, [{ score: 1.1, confidence: 0.9 }]);
     await $.prompt.submit({ text: "add a csv export", wait: false, origin: { kind: "composer" } } as never);
@@ -254,6 +280,13 @@ describe("cache-safe setups", () => {
 
   test("on Bedrock nothing is sent, since the change could not be applied", { options: ON }, async ($, on) => {
     const w = world(on, [{ score: 2.1 }], { CLAUDE_CODE_USE_BEDROCK: "1" });
+    await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
+    expect(w.fetched.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("medium");
+  });
+
+  test("signed in through a Claude apps gateway, nothing is sent", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], {}, { policy: { forceLoginMethod: "gateway" } });
     await prompt($, "fix the flaky crash in compaction", { turnId: "t1" });
     expect(w.fetched.length).toBe(0);
     expect(w.steps[0]?.effort).toBe("medium");

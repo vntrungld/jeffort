@@ -76,17 +76,23 @@ export function isCacheSafeModel(model: string): boolean {
 }
 
 // Setups where the docs say an effort change loses the cache on every model: Amazon Bedrock
-// (and its Mantle endpoint), Google Cloud's Agent Platform (Vertex), a Claude apps gateway,
-// and CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS. Checking them up front saves the two paid misses
-// the guard would need to find out. A custom ANTHROPIC_BASE_URL is left to the guard: whether
-// it keeps the cache depends on the gateway.
+// (and its Mantle endpoint), Google Cloud's Agent Platform (Vertex), and
+// CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS. Checking them up front saves the two paid misses the
+// guard would need to find out. A Claude apps gateway is chosen by signing in, not by an env
+// var: isGatewayLogin reads the setting that sends /login there. A custom ANTHROPIC_BASE_URL
+// is left to the guard: whether it keeps the cache depends on the gateway.
 export const CACHE_UNSAFE_ENV = [
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_MANTLE",
   "CLAUDE_CODE_USE_VERTEX",
-  "CLAUDE_CODE_USE_GATEWAY",
   "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
 ] as const;
+
+// `forceLoginMethod: "gateway"` restricts sign-in to a Claude apps gateway, where the docs say
+// an effort change does not keep the cache.
+export function isGatewayLogin(forceLoginMethod: unknown): boolean {
+  return typeof forceLoginMethod === "string" && forceLoginMethod.trim().toLowerCase() === "gateway";
+}
 
 export function cacheUnsafeEnv(env: Partial<Record<string, string | undefined>>): string | null {
   for (const name of CACHE_UNSAFE_ENV) {
