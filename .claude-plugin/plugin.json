@@ -49,10 +49,16 @@
       "description": "Replace code blocks, secrets, URLs, e-mails, IPs and absolute paths with markers before a prompt goes to TypeSafe.",
       "default": true
     },
+    "confirm_cache_loss": {
+      "type": "boolean",
+      "title": "Ask before losing the cache",
+      "description": "On a model where an effort change re-writes the prompt cache, ask first and show how many cached tokens it costs. Off: cache_safe_only decides.",
+      "default": true
+    },
     "cache_safe_only": {
       "type": "boolean",
       "title": "Only route cache-safe models",
-      "description": "Change effort only on Opus 5.5, Sonnet 5.5 and Fable 5.1, where a per-request effort change keeps the prompt cache.",
+      "description": "Used when confirm_cache_loss is off. On: change effort only on Fable 5.1 and later, Opus 5.5, Sonnet 5.5 and Haiku 5.5, where an effort change keeps the prompt cache. Off: change it everywhere without asking.",
       "default": true
     },
     "cache_guard": {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CacheGuard, isCacheSafeModel } from "../hooks/lib/cache-guard.ts";
+import { CacheGuard, formatTokens, isCacheSafeModel, SubagentPrefixes } from "../hooks/lib/cache-guard.ts";
 import { buildRequest, isAllowedBaseUrl, parseResponse } from "../hooks/lib/jev.ts";
 import { effortQuestions } from "../hooks/lib/questions.ts";
 
@@ -98,6 +98,45 @@ describe("cache guard", () => {
     guard.observe(step(0, "medium", 500, 100));
     expect(guard.observe(step(1000, "high", 0, 2000)).kind).toBe("ok");
   });
+
+  test("an expected miss is not counted", () => {
+    const guard = new CacheGuard();
+    guard.observe(step(0, "medium", 50_000, 100));
+    expect(guard.observe({ ...step(1000, "high", 0, 60_000), expectMiss: true }).kind).toBe("ok");
+    expect(guard.observe(step(2000, "medium", 0, 60_000)).kind).toBe("miss");
+  });
+
+  test("the warm prefix is what the last request left cached, while warm and on that model", () => {
+    const guard = new CacheGuard();
+    expect(guard.warmPrefix(0, "claude-opus-5")).toBe(0);
+    guard.observe(step(0, "medium", 50_000, 1_200));
+    expect(guard.warmPrefix(1000, "claude-opus-5")).toBe(51_200);
+    expect(guard.warmPrefix(1000, "claude-opus-4-8")).toBe(0);
+    expect(guard.warmPrefix(6 * 60_000, "claude-opus-5")).toBe(0);
+    guard.reset();
+    expect(guard.warmPrefix(1000, "claude-opus-5")).toBe(0);
+  });
+});
+
+describe("subagent prefixes", () => {
+  test("a switch away from the last same-type subagent's model reports its prefix", () => {
+    const prefixes = new SubagentPrefixes();
+    prefixes.record("general-purpose", "claude-sonnet-5-5", 14_000, 0);
+    expect(prefixes.lost("general-purpose", "opus", 1000)).toEqual({ model: "claude-sonnet-5-5", tokens: 14_000 });
+    expect(prefixes.lost("general-purpose", "sonnet", 1000)).toBeNull();
+    expect(prefixes.lost("general-purpose", "claude-sonnet-5-5", 1000)).toBeNull();
+    expect(prefixes.lost("code-reviewer", "opus", 1000)).toBeNull();
+    expect(prefixes.lost("general-purpose", "opus", 6 * 60_000)).toBeNull();
+  });
+});
+
+test.each([
+  [800, "800"],
+  [4_531, "4.5k"],
+  [51_200, "51k"],
+  [1_250_000, "1.3M"],
+] as const)("formatTokens(%p) = %p", (tokens, text) => {
+  expect(formatTokens(tokens)).toBe(text);
 });
 
 test.each([
@@ -105,6 +144,8 @@ test.each([
   ["claude-opus-5-5[1m]", true],
   ["claude-sonnet-5-5-20261001", true],
   ["claude-fable-5-1", true],
+  ["claude-fable-5-2", true],
+  ["claude-haiku-5-5", true],
   ["claude-opus-5", false],
   ["claude-fable-5", false],
   ["claude-sonnet-5", false],

@@ -24,7 +24,8 @@ function effortAnswers(reply: JevReply) {
 }
 
 // Everything beneath the mod. `replies` answers Jev requests in order; `null` never answers.
-function world(on: On, replies: (JevReply | null)[] = []) {
+// `answers` replies to the cache-loss dialog in order; `null` dismisses it.
+function world(on: On, replies: (JevReply | null)[] = [], answers: (string | null)[] = []) {
   const clock = mock.clock(on, { now: 1_000_000 });
   mock.store(on);
   mock.env(on, {});
@@ -32,6 +33,7 @@ function world(on: On, replies: (JevReply | null)[] = []) {
   const steps: { agentId?: string; effort?: unknown; model: string }[] = [];
   const logs: string[] = [];
   const statuses: (string | undefined)[] = [];
+  const asked: string[] = [];
   let usage = { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 100 };
 
   on("http.fetch", async (_$, e) => {
@@ -55,11 +57,19 @@ function world(on: On, replies: (JevReply | null)[] = []) {
     return { value: undefined };
   });
   on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+  on("tool.call", { tool: "AskUserQuestion" }, async (_$, e) => {
+    const question = e.questions[0]!.question;
+    asked.push(question);
+    const answer = answers.shift();
+    if (answer === null || answer === undefined) return { deny: "dismissed" };
+    return { result: { questions: e.questions, answers: { [question]: answer } } };
+  });
   on("prompt.submit", async (_$, e) => ({ text: e.text }));
   on("turn.start", async (_$, e) => ({ turnId: e.turnId }));
   on("turn.complete", async (_$, e) => ({ text: e.answer }));
   on("session.end", async (_$, e) => ({ sessionId: e.sessionId }));
-  on("agent.spawn", async (_$, e) => ({ model: e.model ?? e.parentModel, agentId: "agent-1" }));
+  let spawned = 0;
+  on("agent.spawn", async (_$, e) => ({ model: e.model ?? e.parentModel, agentId: `agent-${++spawned}` }));
   on("turn.step", async function* (_$, e): AsyncGenerator<never, TurnStepResult> {
     steps.push({ agentId: e.agentId, effort: e.effort, model: e.model });
     return {
@@ -78,6 +88,7 @@ function world(on: On, replies: (JevReply | null)[] = []) {
     steps,
     logs,
     statuses,
+    asked,
     setUsage(next: typeof usage) {
       usage = next;
     },
@@ -171,10 +182,12 @@ describe("effort routing", () => {
     expect(w.steps[0]?.effort).toBe("medium");
   });
 
-  test("leaves models where an effort change costs the cache", { options: ON }, async ($, on) => {
+  test("with confirm_cache_loss off, leaves models where an effort change costs the cache", { options: { ...ON, confirm_cache_loss: false } }, async ($, on) => {
     const w = world(on, [{ score: 2.1 }]);
+    await drain($.turn.step({ turnId: "t0", index: 0, model: "claude-opus-5", effort: "medium", messageCount: 3 }));
     await prompt($, "fix the race in the session store", { turnId: "t1", model: "claude-opus-5" });
-    expect(w.steps[0]?.effort).toBe("medium");
+    expect(w.steps[1]?.effort).toBe("medium");
+    expect(w.asked.length).toBe(0);
   });
 
   test("a slow Jev leaves the turn at the session level", { options: ON }, async ($, on) => {
@@ -193,6 +206,70 @@ describe("effort routing", () => {
     const w = world(on, [{ score: 2.1 }]);
     await prompt($, "fix the flaky crash", { turnId: "t1" });
     expect(w.fetched.length).toBe(0);
+  });
+});
+
+describe("confirming a cache loss", () => {
+  const OPUS_5 = "claude-opus-5";
+  const warmUp = ($: Engine) => drain($.turn.step({ turnId: "t0", index: 0, model: OPUS_5, effort: "medium", messageCount: 3 }));
+
+  test("asks once per turn, naming the cached tokens; Switch routes every step", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], ["Switch"]);
+    await warmUp($);
+    await prompt($, "fix the race in the session store", { turnId: "t1", model: OPUS_5, steps: 2 });
+    expect(w.asked.length).toBe(1);
+    expect(w.asked[0]).toContain("medium → high");
+    expect(w.asked[0]).toContain("~50k cached tokens");
+    expect(w.steps.slice(1).map((s) => s.effort)).toEqual(["high", "high"]);
+    // An agreed miss is not held against routing.
+    expect(w.logs.some((l) => l.includes("prompt cache missed"))).toBe(false);
+  });
+
+  test("Keep leaves the turn at the session level", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], ["Keep"]);
+    await warmUp($);
+    await prompt($, "fix the race in the session store", { turnId: "t1", model: OPUS_5, steps: 2 });
+    expect(w.steps.slice(1).map((s) => s.effort)).toEqual(["medium", "medium"]);
+    expect(w.logs.some((l) => l.startsWith("jev: kept medium"))).toBe(true);
+  });
+
+  test("a dismissed dialog keeps the session level", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }], [null]);
+    await warmUp($);
+    await prompt($, "fix the race in the session store", { turnId: "t1", model: OPUS_5 });
+    expect(w.steps[1]?.effort).toBe("medium");
+  });
+
+  test("Always switch and Never switch hold for the session", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }, { score: 2.1 }, { score: 2.1 }, { score: 2.1 }], ["Always switch", "Never switch"]);
+    await warmUp($);
+    await prompt($, "fix the race in the session store", { turnId: "t1", model: OPUS_5 });
+    await prompt($, "fix the race in the job queue", { turnId: "t2", model: OPUS_5 });
+    expect(w.asked.length).toBe(1);
+    expect(w.steps.slice(1).map((s) => s.effort)).toEqual(["high", "high"]);
+
+    // /jev on starts asking again.
+    await $.command.run({ command: "jev", args: "on", origin: { kind: "composer" }, presentation: { isFullscreen: false, columns: 120 } } as never);
+    await warmUp($);
+    await prompt($, "fix the race in the cache", { turnId: "t3", model: OPUS_5 });
+    await prompt($, "fix the race in the mailer", { turnId: "t4", model: OPUS_5 });
+    expect(w.asked.length).toBe(2);
+    expect(w.steps.slice(-2).map((s) => s.effort)).toEqual(["medium", "medium"]);
+  });
+
+  test("a cold cache has nothing to lose, so it switches without asking", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }]);
+    await prompt($, "fix the race in the session store", { turnId: "t1", model: OPUS_5 });
+    expect(w.asked.length).toBe(0);
+    expect(w.steps[0]?.effort).toBe("high");
+  });
+
+  test("cache-safe models never ask", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1 }]);
+    await drain($.turn.step({ turnId: "t0", index: 0, model: OPUS_55, effort: "medium", messageCount: 3 }));
+    await prompt($, "fix the race in the session store", { turnId: "t1" });
+    expect(w.asked.length).toBe(0);
+    expect(w.steps[1]?.effort).toBe("high");
   });
 });
 
@@ -282,6 +359,17 @@ describe("subagent model routing", () => {
     await $.agent.spawn(spawn({ subagentType: "Explore" }) as never);
     await $.agent.spawn(spawn({ fork: true }) as never);
     expect(w.fetched.length).toBe(0);
+  });
+
+  test("a switch away from the last same-type subagent's model says what it does not reuse", { options: ON }, async ($, on) => {
+    const w = world(on, [{ work: "delegated", workConfidence: 0.9 }, { work: "judgment", workConfidence: 0.9 }]);
+    const first = await $.agent.spawn(spawn({ prompt: "Find every caller of getUser" }) as never);
+    expect(first.model).toBe("sonnet");
+    w.setUsage({ input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 14_000, cache_creation_input_tokens: 500 });
+    await drain($.turn.step({ turnId: "s1", index: 0, model: "claude-sonnet-5-5", effort: "medium", messageCount: 1, agentId: "agent-1" }));
+    await $.agent.spawn(spawn() as never);
+    expect(w.logs.at(-1)).toContain("~15k tokens the last general-purpose cached on claude-sonnet-5-5 are not reused");
+    expect(w.asked.length).toBe(0);
   });
 
   test("can be turned off", { options: { ...ON, route_subagents: false } }, async ($, on) => {

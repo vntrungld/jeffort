@@ -34,9 +34,9 @@ Hook flow in `register.ts` (session state is module-level; resets on plugin relo
 
 1. `prompt.submit` marks prompts the person typed (origin `composer`/`bridge`/`sdk`, no `turnId`) by `promptKey`. Notifications, peers, prompts folded into a running turn are not marked.
 2. `turn.start` asks Jev once for a marked prompt (`shapePrompt` → `effortQuestions` → `readEffortAnswers` → `decideEffort` → `capLevel` to `max_effort`), stores the route by `turnId`.
-3. `turn.step` rewrites `effort` on each main-loop request of that turn (skips steps with `agentId` — subagents keep their own effort; skips non-cache-safe models when `cache_safe_only`). Also feeds every step's usage to `CacheGuard`, which warns on the first effort-change cache miss and disables routing on the second.
+3. `turn.step` rewrites `effort` on each main-loop request of that turn (skips steps with `agentId` — subagents keep their own effort). On a non-cache-safe model it asks once per turn via `$.ui.ask` with the warm cached prefix (`confirm_cache_loss`; session-wide Always/Never in `session.consent`), or falls back to `cache_safe_only` when that option is off. Also feeds every step's usage to `CacheGuard`, which gives the warm prefix and warns on the first unexpected effort-change cache miss and disables routing on the second.
 4. `turn.complete` drops the route; the next turn starts at the session level.
-5. `agent.spawn` routes a subagent's **model** (not effort) to `judgment_model` or `delegated_model` via `subagentQuestions` / `decideSubagentModel`; skips forks and `SKIPPED_SUBAGENT_TYPES`.
+5. `agent.spawn` routes a subagent's **model** (not effort) to `judgment_model` or `delegated_model` via `subagentQuestions` / `decideSubagentModel`; skips forks and `SKIPPED_SUBAGENT_TYPES`. Its log line names the prefix (`SubagentPrefixes`) the last same-type subagent cached on its previous model.
 
 Library roles: `jev.ts` (request build/parse, base-URL allowlist: https or http-to-localhost only), `policy.ts` (thresholds → level, subagent model choice), `questions.ts` (the Jev questions), `redact.ts` (pasted/code blocks, secrets, URLs, emails, IPs, absolute paths → markers; 3000 head + 1000 tail truncation), `cache-guard.ts`.
 

@@ -13,7 +13,7 @@ This is a fork of [jjjjjjjjjjjjjjjjacob/jev-router](https://github.com/jjjjjjjjj
 | Turns from notifications, peers, plugins | Routed like ordinary prompts | Skipped; only prompts you type are routed |
 | Data sent to TypeSafe | Prompt (pasted blocks removed), head/tail truncated | Same as upstream, plus masking of code blocks, secrets, URLs, e-mails, IPs and absolute paths |
 | Highest effort | `max` | `xhigh` (configurable) |
-| Cache | Trusts the docs | Watches real `cache_read`/`cache_creation`, warns and then pauses when an effort change loses the cache |
+| Cache | Trusts the docs | Asks before an effort change that would re-write the cache, showing how many tokens; watches real `cache_read`/`cache_creation`, warns and then pauses when an unexpected miss shows up |
 | Subagents | Inherit the turn's effort; model routed by judgment/delegated | Keep their own effort; model routed as upstream, via `agent.spawn` |
 | Runtime | Bun/Node, shell scripts, tool-call hooks | Runs inside Claude Code's engine; no Bun/Node needed |
 
@@ -48,6 +48,22 @@ If your organization sets `allowManagedModsOnly` or `allowManagedHooksOnly` in m
 
 Each routed turn shows a dim line such as `jev → high · verification decides success (conf 0.72)`. The status line shows `jev · <level>` while routing is on. The next turn goes back to the session level unless Jev picks another level.
 
+### Effort changes that cost the cache
+
+Changing effort keeps the prompt cache only on Fable 5.1 and later, Opus 5.5, Sonnet 5.5 and Haiku 5.5, with an API key or a Claude subscription. On any other model (Opus 5, the 4.x models), the next request re-writes the whole conversation. Before such a change, jeffort asks once for the turn:
+
+```
+jev wants medium → high for this turn (verification). On claude-opus-5 an effort change
+re-writes the prompt cache: ~50k cached tokens are written again, and again when a later
+turn goes back to medium. Switch?
+  Switch · Keep · Always switch · Never switch
+```
+
+The token count is what the previous request left cached. It only asks while that cache is warm (the last request on the same model, under 4 minutes ago). A cold cache has nothing to lose, so the switch goes ahead without asking. *Always switch* and *Never switch* hold until `/jev on` or `/clear`. A dismissed dialog, or a `-p` run with no one to ask, keeps the session's effort. The cache guard does not count misses you agreed to.
+
+Bedrock, Google Cloud's Agent Platform and gateways can lose the cache even on the models above. jeffort cannot tell from the model name, so it does not ask there. The cache guard catches it instead.
+
+When a subagent's model is routed, the `jev → subagent on …` line also says how many tokens the last subagent of the same type cached on its previous model, since those are not reused. It never asks: a subagent is a new conversation, and the main session's cache is untouched.
 ## Options
 
 | Option | Default | Meaning |
@@ -58,7 +74,8 @@ Each routed turn shows a dim line such as `jev → high · verification decides 
 | `route_subagents` | `true` | Route subagent models |
 | `judgment_model` / `delegated_model` | `opus` / `sonnet` | Model for review/debug/design subagents, and for subagents doing delegated work |
 | `redact` | `true` | Mask data before sending (see below) |
-| `cache_safe_only` | `true` | Only change effort on Opus 5.5, Sonnet 5.5, Fable 5.1 |
+| `confirm_cache_loss` | `true` | On other models, ask before changing effort and show the cached tokens it costs (see below) |
+| `cache_safe_only` | `true` | When `confirm_cache_loss` is off: only change effort on Fable 5.1 and later, Opus 5.5, Sonnet 5.5, Haiku 5.5 (off: change it everywhere without asking) |
 | `cache_guard` | `true` | Warn on the first cache miss, pause on the second |
 | `timeout_ms` | `2500` | How long to wait for Jev before the turn runs at the session level |
 | `show_decisions` | `true` | Show the `jev → …` line |
@@ -92,8 +109,8 @@ Locally, decisions are kept in the mod's `$.store` (at most 200 entries, each th
 
 ## Test results
 
-- `bun test ./test`: 79 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
-- `claude plugin test .`: 18 tests running the mod on Claude Code's real engine (per-turn routing, subagents, notifications, timeouts, base URL, filtering, cache guard, `/jev`). Three key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models) to confirm the tests catch each one.
+- `bun test ./test`: 88 unit tests for the policy (ported from upstream), the filter, the Jev client and the cache guard.
+- `claude plugin test .`: 26 tests running the mod on Claude Code's real engine (per-turn routing, subagents, notifications, timeouts, base URL, filtering, cache guard, cache-loss confirmation, `/jev`). Three key behaviours were deliberately broken (skipping subagent steps, filtering, routing only cache-safe models) to confirm the tests catch each one.
 - `claude plugin validate .` and `tsc` are clean.
 - **Real run in a headless Claude Code 2.1.289 session** (Sonnet 5.5), against a mock Jev server on localhost:
   - The transcript records `effort: high` / `low` correctly for each routed turn, so the effort really reaches the API.

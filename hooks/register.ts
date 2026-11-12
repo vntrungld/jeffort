@@ -15,9 +15,12 @@
 //
 // Everything fails open: no key, a timeout, an error or an unsure answer leaves the turn at
 // the session's own effort. Subagents keep their own effort; only their model is routed.
+//
+// On a model where an effort change re-writes the prompt cache, the turn's first step asks
+// first (confirm_cache_loss), naming how many cached tokens the change would write again.
 
 import type { EngineInterface, Register } from "claude-code";
-import { CacheGuard, isCacheSafeModel } from "./lib/cache-guard.ts";
+import { CacheGuard, formatTokens, isCacheSafeModel, SubagentPrefixes } from "./lib/cache-guard.ts";
 import { buildRequest, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, isAllowedBaseUrl, parseResponse, type JevAnswers, type Question } from "./lib/jev.ts";
 import { capLevel, decideEffort, decideSubagentModel, isLevel, readEffortAnswers, SKIPPED_SUBAGENT_TYPES, type Level } from "./lib/policy.ts";
 import { effortQuestions, subagentQuestions, type EffortState, type SubagentState } from "./lib/questions.ts";
@@ -28,6 +31,12 @@ const MAX_MARKED_PROMPTS = 20;
 const RECENT_DECISIONS = 8;
 const STORED_DECISIONS = 200;
 const ROUTED_ORIGINS = new Set(["composer", "bridge", "sdk"]);
+const MAX_TRACKED_AGENTS = 50;
+
+const SWITCH = "Switch";
+const KEEP = "Keep";
+const ALWAYS = "Always switch";
+const NEVER = "Never switch";
 
 type Decision = {
   at: number;
@@ -43,7 +52,11 @@ type Decision = {
   redactions?: number;
 };
 
-type Route = { level: Level; decision: Decision; logged: boolean };
+// `allowed`: the answer for this turn on a model where the change costs the cache.
+type Route = { level: Level; decision: Decision; logged: boolean; allowed?: boolean };
+
+// What to do on a model where an effort change costs the cache, as the person answered.
+type CacheConsent = "ask" | "always" | "never";
 
 type Config = {
   apiKey: string | undefined;
@@ -54,6 +67,7 @@ type Config = {
   delegatedModel: string;
   redact: boolean;
   cacheSafeOnly: boolean;
+  confirmCacheLoss: boolean;
   cacheGuard: boolean;
   timeoutMs: number;
   showDecisions: boolean;
@@ -73,6 +87,9 @@ const session = {
   routed: new Map<string, Route>(),
   recent: [] as Decision[],
   guard: new CacheGuard(),
+  consent: "ask" as CacheConsent,
+  agentTypes: new Map<string, string>(), // agentId → subagentType
+  subagentPrefixes: new SubagentPrefixes(),
 };
 
 export const register: Register = (on, options) => {
@@ -85,6 +102,7 @@ export const register: Register = (on, options) => {
     delegatedModel: text(options.delegated_model) ?? "sonnet",
     redact: options.redact !== false,
     cacheSafeOnly: options.cache_safe_only !== false,
+    confirmCacheLoss: options.confirm_cache_loss !== false,
     cacheGuard: options.cache_guard !== false,
     timeoutMs: typeof options.timeout_ms === "number" ? options.timeout_ms : DEFAULT_TIMEOUT_MS,
     showDecisions: options.show_decisions !== false,
@@ -180,16 +198,25 @@ export const register: Register = (on, options) => {
 
   on("turn.step", async function* ($, e, next) {
     // Subagent loops keep their own effort: their steps carry agentId and their own turnId.
-    if (e.agentId) return yield* next(e);
+    // Their first step's cache is remembered so a later model switch can say what it costs.
+    if (e.agentId) {
+      const result = yield* next(e);
+      const subagentType = session.agentTypes.get(e.agentId);
+      if (session.enabled && e.index === 0 && subagentType && result.usage) {
+        const usage = result.usage;
+        session.subagentPrefixes.record(subagentType, e.model, usage.cache_read_input_tokens + usage.cache_creation_input_tokens, await $.clock.now());
+      }
+      return result;
+    }
 
     const route = session.enabled ? session.routed.get(e.turnId) : undefined;
     const current = e.effort;
-    const routable =
-      route !== undefined &&
-      typeof current === "string" &&
-      isLevel(current) &&
-      (!config.cacheSafeOnly || isCacheSafeModel(e.model));
-    const sent = routable && current !== route.level ? { ...e, effort: route.level } : e;
+    const safe = isCacheSafeModel(e.model);
+    let routable = route !== undefined && typeof current === "string" && isLevel(current) && current !== route.level;
+    if (routable && !safe) {
+      routable = config.confirmCacheLoss ? await allowCacheLoss($, route!, e.model, current as Level) : !config.cacheSafeOnly;
+    }
+    const sent = routable ? { ...e, effort: route!.level } : e;
 
     if (route && !route.logged) {
       route.logged = true;
@@ -202,15 +229,20 @@ export const register: Register = (on, options) => {
 
     const result = yield* next(sent);
 
-    if (session.enabled && config.cacheGuard && result.usage) {
+    // Every step is observed, so the next ask knows the warm prefix; the guard only judges
+    // misses nobody agreed to.
+    if (session.enabled && result.usage) {
       const verdict = session.guard.observe({
         at: await $.clock.now(),
         model: e.model,
         effort: sent.effort,
         cacheRead: result.usage.cache_read_input_tokens,
         cacheWrite: result.usage.cache_creation_input_tokens,
+        expectMiss: !safe && config.confirmCacheLoss,
       });
-      if (verdict.kind === "miss") {
+      if (!config.cacheGuard) {
+        // observed for the warm prefix only
+      } else if (verdict.kind === "miss") {
         $.ui.log(`jev: the prompt cache missed right after an effort change on ${e.model} (${verdict.written} tokens re-written). Routing pauses if it happens again.`);
       } else if (verdict.kind === "pause") {
         setEnabled($, false);
@@ -233,6 +265,9 @@ export const register: Register = (on, options) => {
       session.routed.clear();
       session.marked.clear();
       session.guard.reset();
+      session.consent = "ask";
+      session.agentTypes.clear();
+      session.subagentPrefixes.reset();
       showStatus($);
     }
     return next(e);
@@ -267,8 +302,17 @@ export const register: Register = (on, options) => {
       latencyMs: result.latencyMs,
     });
     if (!decision.model) return next(e);
-    if (config.showDecisions) $.ui.log(`jev → subagent on ${decision.model} (${decision.reason})`);
-    return next({ ...e, model: decision.model });
+    if (config.showDecisions) {
+      const lost = session.subagentPrefixes.lost(e.subagentType, decision.model, await $.clock.now());
+      const cost = lost ? ` · ~${formatTokens(lost.tokens)} tokens the last ${e.subagentType} cached on ${lost.model} are not reused` : "";
+      $.ui.log(`jev → subagent on ${decision.model} (${decision.reason})${cost}`);
+    }
+    const spawned = await next({ ...e, model: decision.model });
+    if ("agentId" in spawned && spawned.agentId) {
+      session.agentTypes.set(spawned.agentId, e.subagentType);
+      while (session.agentTypes.size > MAX_TRACKED_AGENTS) session.agentTypes.delete(session.agentTypes.keys().next().value as string);
+    }
+    return spawned;
   });
 };
 
@@ -322,6 +366,32 @@ async function remember($: EngineInterface, decision: Decision): Promise<void> {
   }
 }
 
+// On a model where an effort change re-writes the prompt cache: asks once per turn, unless
+// the person already answered for the session or the cache is cold (nothing to lose).
+// A dismissed dialog, or a -p run with no one to ask, keeps the session's effort.
+async function allowCacheLoss($: EngineInterface, route: Route, model: string, current: Level): Promise<boolean> {
+  if (route.allowed !== undefined) return route.allowed;
+  if (session.consent !== "ask") return (route.allowed = session.consent === "always");
+  const tokens = session.guard.warmPrefix(await $.clock.now(), model);
+  if (tokens === 0) return (route.allowed = true);
+
+  const question =
+    `jev wants ${current} → ${route.level} for this turn (${route.decision.reasons.join(", ")}). ` +
+    `On ${model} an effort change re-writes the prompt cache: ~${formatTokens(tokens)} cached tokens ` +
+    `are written again, and again when a later turn goes back to ${current}. Switch?`;
+  let answer: string;
+  try {
+    answer = await $.ui.ask(question, { header: "jev", options: [SWITCH, KEEP, ALWAYS, NEVER] });
+  } catch {
+    return (route.allowed = false);
+  }
+  if (answer === ALWAYS) session.consent = "always";
+  if (answer === NEVER) session.consent = "never";
+  route.allowed = answer === SWITCH || answer === ALWAYS;
+  if (!route.allowed && config.showDecisions) $.ui.log(`jev: kept ${current} on ${model} (cache kept, ~${formatTokens(tokens)} tokens)`);
+  return route.allowed;
+}
+
 function showStatus($: EngineInterface): void {
   $.ui.status(session.enabled ? (session.lastLevel ? `jev · ${session.lastLevel}` : "jev") : undefined);
 }
@@ -331,6 +401,7 @@ function setEnabled($: EngineInterface, value: boolean): void {
   if (value) {
     session.pausedReason = null;
     session.guard.reset();
+    session.consent = "ask";
   } else {
     session.routed.clear();
     session.marked.clear();
@@ -341,7 +412,7 @@ function setEnabled($: EngineInterface, value: boolean): void {
 async function statusText($: EngineInterface): Promise<string> {
   const key = (await apiKey($)) ? "key set" : "no key";
   const state = session.enabled ? "ON" : session.pausedReason ? `PAUSED (${session.pausedReason})` : "OFF";
-  const head = `Jev routing is ${state} · ${key} · up to ${config.maxEffort} · redaction ${config.redact ? "on" : "off"} · cache-safe models only: ${config.cacheSafeOnly ? "yes" : "no"}`;
+  const head = `Jev routing is ${state} · ${key} · up to ${config.maxEffort} · redaction ${config.redact ? "on" : "off"} · other models: ${otherModels()}`;
   if (session.recent.length === 0) return `${head}\nNo decisions yet.`;
   const lines = session.recent.map((d) => {
     if (d.kind === "subagent") return `- subagent → ${d.model ?? "unchanged"} (${d.reasons.join(", ")}) · "${d.preview}"`;
@@ -351,6 +422,14 @@ async function statusText($: EngineInterface): Promise<string> {
     return `- ${level}${applied} · ${d.reasons.join(", ")}${conf} · ${d.latencyMs ?? "?"} ms · "${d.preview}"`;
   });
   return `${head}\nLast ${session.recent.length}:\n${lines.join("\n")}`;
+}
+
+// What happens on a model where an effort change costs the cache.
+function otherModels(): string {
+  if (!config.confirmCacheLoss) return config.cacheSafeOnly ? "skipped" : "changed without asking";
+  if (session.consent === "always") return "always switch (this session)";
+  if (session.consent === "never") return "never switch (this session)";
+  return "ask first";
 }
 
 function text(value: unknown): string | undefined {
