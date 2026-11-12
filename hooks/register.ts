@@ -11,6 +11,7 @@
 //   turn.step      sends each main-loop request of that turn at the routed level
 //   turn.complete  forgets the turn; the next prompt starts at the session level again
 //   agent.spawn    picks a subagent's model from the kind of work it is given
+//   session.end    on /clear, forgets the previous prompt and level so Jev starts afresh
 //
 // Everything fails open: no key, a timeout, an error or an unsure answer leaves the turn at
 // the session's own effort. Subagents keep their own effort; only their model is routed.
@@ -222,6 +223,18 @@ export const register: Register = (on, options) => {
 
   on("turn.complete", async ($, e, next) => {
     if (!e.agentId) session.routed.delete(e.turnId);
+    return next(e);
+  });
+
+  on("session.end", async ($, e, next) => {
+    if (e.reason === "clear") {
+      session.lastLevel = null;
+      session.lastRequest = undefined;
+      session.routed.clear();
+      session.marked.clear();
+      session.guard.reset();
+      showStatus($);
+    }
     return next(e);
   });
 

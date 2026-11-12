@@ -58,6 +58,7 @@ function world(on: On, replies: (JevReply | null)[] = []) {
   on("prompt.submit", async (_$, e) => ({ text: e.text }));
   on("turn.start", async (_$, e) => ({ turnId: e.turnId }));
   on("turn.complete", async (_$, e) => ({ text: e.answer }));
+  on("session.end", async (_$, e) => ({ sessionId: e.sessionId }));
   on("agent.spawn", async (_$, e) => ({ model: e.model ?? e.parentModel, agentId: "agent-1" }));
   on("turn.step", async function* (_$, e): AsyncGenerator<never, TurnStepResult> {
     steps.push({ agentId: e.agentId, effort: e.effort, model: e.model });
@@ -130,6 +131,14 @@ describe("effort routing", () => {
     expect(w.steps[3]?.effort).toBe("medium");
     expect(w.fetched.length).toBe(2);
     expect(w.fetched[1]?.body.state.previous_request).toContain("compaction path");
+  });
+
+  test("/clear forgets the previous prompt", { options: ON }, async ($, on) => {
+    const w = world(on, [{ score: 2.1, confidence: 0.8 }, { score: 1.1, confidence: 0.8 }]);
+    await prompt($, "fix the flaky crash in the compaction path, reproduce it first", { turnId: "t1" });
+    await $.session.end({ reason: "clear", sessionId: "s1", resume: { id: "s1" } } as never);
+    await prompt($, "add a CSV export button to the reports page", { turnId: "t2" });
+    expect(w.fetched[1]?.body.state.previous_request).toBeUndefined();
   });
 
   test("a bare go-ahead keeps the previous level", { options: ON }, async ($, on) => {
